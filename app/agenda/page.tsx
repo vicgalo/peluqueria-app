@@ -4,7 +4,7 @@ import "react-big-calendar/lib/css/react-big-calendar.css";
 import "@/app/agenda/agenda.css";
 
 import { Calendar, dateFnsLocalizer, Views } from "react-big-calendar";
-import { format, parse, startOfWeek, getDay } from "date-fns";
+import { format, parse, startOfWeek, getDay, addMinutes } from "date-fns";
 import { es } from "date-fns/locale";
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
@@ -16,7 +16,7 @@ const locales = { es };
 const localizer = dateFnsLocalizer({
   format,
   parse,
-  startOfWeek: () => startOfWeek(new Date(), { weekStartsOn: 1 }), // lunes
+  startOfWeek: () => startOfWeek(new Date(), { weekStartsOn: 1 }),
   getDay,
   locales,
 });
@@ -38,7 +38,7 @@ const messages = {
 };
 
 /* ─────────────────────────────
-   Festivos nacionales 2026 (con traslados típicos)
+   Festivos nacionales 2026
 ───────────────────────────── */
 function isoDate(d: Date) {
   const y = d.getFullYear();
@@ -54,9 +54,9 @@ const HOLIDAYS_2026: { date: string; name: string }[] = [
   { date: "2026-05-01", name: "Fiesta del Trabajo" },
   { date: "2026-08-15", name: "Asunción de la Virgen" },
   { date: "2026-10-12", name: "Fiesta Nacional de España" },
-  { date: "2026-11-01", name: "Todos los Santos" }, // domingo en 2026
+  { date: "2026-11-01", name: "Todos los Santos" },
   { date: "2026-11-02", name: "Traslado Todos los Santos" },
-  { date: "2026-12-06", name: "Día de la Constitución" }, // domingo en 2026
+  { date: "2026-12-06", name: "Día de la Constitución" },
   { date: "2026-12-07", name: "Traslado Constitución" },
   { date: "2026-12-08", name: "Inmaculada Concepción" },
   { date: "2026-12-25", name: "Navidad" },
@@ -98,13 +98,37 @@ function toLocalInputValue(d: Date) {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
+/* ─────────────────────────────
+   Helpers selector móvil
+───────────────────────────── */
+function hhmm(d: Date) {
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+function buildTimeOptions(startHour = 9, endHour = 20, stepMin = 15) {
+  const out: string[] = [];
+  for (let h = startHour; h <= endHour; h++) {
+    for (let m = 0; m < 60; m += stepMin) {
+      if (h === endHour && m > 0) break; // no pasar de 20:00 exacto
+      const hh = String(h).padStart(2, "0");
+      const mm = String(m).padStart(2, "0");
+      out.push(`${hh}:${mm}`);
+    }
+  }
+  return out;
+}
+
+const TIME_OPTIONS = buildTimeOptions(9, 20, 15);
+const DURATION_OPTIONS = [15, 30, 45, 60, 75, 90, 105, 120];
+
 export default function AgendaPage() {
   const [loading, setLoading] = useState(true);
   const [events, setEvents] = useState<EventT[]>([]);
   const [clients, setClients] = useState<Client[]>([]);
   const [services, setServices] = useState<Service[]>([]);
 
-  // Crear
+  // Crear (modal)
   const [createSlot, setCreateSlot] = useState<null | { start: Date; end: Date }>(null);
   const [createClientId, setCreateClientId] = useState<string>("__new__");
   const [createClientName, setCreateClientName] = useState("");
@@ -123,17 +147,28 @@ export default function AgendaPage() {
   const [editStatus, setEditStatus] = useState<Row["status"]>("reserved");
   const [editPaid, setEditPaid] = useState(false);
   const [editPaymentMethod, setEditPaymentMethod] = useState<Row["payment_method"]>(null);
+
   const [saving, setSaving] = useState(false);
 
-  /* ─────────────────────────────
-     Festivos como eventos (todo el día)
-  ───────────────────────────── */
+  // Móvil: selector día + hora
+  const [isMobile, setIsMobile] = useState(false);
+  const [mobilePickOpen, setMobilePickOpen] = useState(false);
+  const [mobileDay, setMobileDay] = useState<Date | null>(null);
+  const [mobileStartHHMM, setMobileStartHHMM] = useState("09:00");
+  const [mobileDuration, setMobileDuration] = useState<number>(30);
+
+  useEffect(() => {
+    const check = () => setIsMobile(window.innerWidth < 768);
+    check();
+    window.addEventListener("resize", check);
+    return () => window.removeEventListener("resize", check);
+  }, []);
+
   const holidayEvents: any[] = useMemo(() => {
     return HOLIDAYS_2026.map((h) => {
       const start = new Date(`${h.date}T00:00:00`);
       const end = new Date(start);
       end.setDate(end.getDate() + 1);
-
       return {
         id: `holiday-${h.date}`,
         title: `🎉 ${h.name}`,
@@ -145,15 +180,11 @@ export default function AgendaPage() {
     });
   }, []);
 
-  /* ─────────────────────────────
-     Estilos de eventos (citas + festivos)
-  ───────────────────────────── */
   const eventStyleGetter = useMemo(
     () => (event: any) => {
       if (event?.isHoliday) {
         return { className: "is-holiday-event text-white rounded-md" };
       }
-
       const s = event?.raw?.status;
       const paid = event?.raw?.paid;
 
@@ -197,7 +228,6 @@ export default function AgendaPage() {
     if (error) console.error(error);
 
     const rows = (data ?? []) as unknown as Row[];
-
     setEvents(
       rows.map((r) => ({
         id: r.id,
@@ -238,6 +268,15 @@ export default function AgendaPage() {
       .single();
     if (error) throw new Error(error.message);
     return data.id as string;
+  }
+
+  function openCreateFromDayAndTime(day: Date, hhmmStr: string, durationMin: number) {
+    const [hh, mm] = hhmmStr.split(":").map((x) => Number(x));
+    const start = new Date(day);
+    start.setHours(hh, mm, 0, 0);
+    const end = addMinutes(start, durationMin);
+    setCreateSlot({ start, end });
+    setCreateErr(null);
   }
 
   async function createAppointment() {
@@ -289,8 +328,8 @@ export default function AgendaPage() {
 
       const start = new Date(editStart);
       const end = new Date(editEnd);
-      if (!(start instanceof Date) || Number.isNaN(start.getTime())) throw new Error("Hora inicio inválida.");
-      if (!(end instanceof Date) || Number.isNaN(end.getTime())) throw new Error("Hora fin inválida.");
+      if (Number.isNaN(start.getTime())) throw new Error("Hora inicio inválida.");
+      if (Number.isNaN(end.getTime())) throw new Error("Hora fin inválida.");
       if (end <= start) throw new Error("La hora fin debe ser posterior a inicio.");
 
       const { error } = await supabase
@@ -346,6 +385,26 @@ export default function AgendaPage() {
         </button>
       </div>
 
+      {/* Botón extra en móvil: elegir día + hora */}
+      {isMobile && (
+        <div className="border rounded-xl bg-white p-3 flex items-center gap-2">
+          <div className="text-sm text-zinc-600">
+            En móvil: toca un día del calendario o usa “Nueva cita”.
+          </div>
+          <button
+            className="ml-auto bg-black text-white rounded-md px-3 py-2"
+            onClick={() => {
+              setMobileDay(new Date());
+              setMobileStartHHMM("09:00");
+              setMobileDuration(30);
+              setMobilePickOpen(true);
+            }}
+          >
+            Nueva cita
+          </button>
+        </div>
+      )}
+
       <div className="border rounded-xl p-2 bg-white">
         <Calendar
           localizer={localizer}
@@ -357,13 +416,14 @@ export default function AgendaPage() {
           popup
           step={15}
           timeslots={4}
-          selectable
+          selectable={!isMobile} // 👈 en móvil evitamos seleccionar slots pequeños
           onSelectSlot={(slot) => {
+            if (isMobile) return;
             setCreateSlot({ start: slot.start as Date, end: slot.end as Date });
             setCreateErr(null);
           }}
           onSelectEvent={(ev: any) => {
-            if (ev?.isHoliday) return; // no editar festivos
+            if (ev?.isHoliday) return;
 
             const e = ev as EventT;
             setEditEvent(e);
@@ -374,6 +434,17 @@ export default function AgendaPage() {
             setEditStatus(e.raw.status);
             setEditPaid(!!e.raw.paid);
             setEditPaymentMethod(e.raw.payment_method ?? null);
+          }}
+          onNavigate={(date) => {
+            // nada
+          }}
+          onDrillDown={(date) => {
+            // En móvil, tocar un día abre selector día+hora
+            if (!isMobile) return;
+            setMobileDay(date as Date);
+            setMobileStartHHMM("09:00");
+            setMobileDuration(30);
+            setMobilePickOpen(true);
           }}
           min={new Date(1970, 1, 1, 9, 0)}
           max={new Date(1970, 1, 1, 20, 0)}
@@ -388,7 +459,79 @@ export default function AgendaPage() {
         />
       </div>
 
-      {/* Modal CREAR */}
+      {/* Modal selector móvil: día + hora */}
+      {mobilePickOpen && mobileDay && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center p-4">
+          <div className="bg-white w-full max-w-md rounded-xl p-4 space-y-3">
+            <h2 className="font-semibold">Nueva cita (móvil)</h2>
+
+            <div className="text-sm text-zinc-600">
+              Día: <b>{format(mobileDay, "EEEE dd/MM/yyyy", { locale: es })}</b>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="text-sm font-medium">Hora inicio</label>
+                <select
+                  className="w-full border rounded-md p-2 bg-white"
+                  value={mobileStartHHMM}
+                  onChange={(e) => setMobileStartHHMM(e.target.value)}
+                >
+                  {TIME_OPTIONS.map((t) => (
+                    <option key={t} value={t}>
+                      {t}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="text-sm font-medium">Duración</label>
+                <select
+                  className="w-full border rounded-md p-2 bg-white"
+                  value={String(mobileDuration)}
+                  onChange={(e) => setMobileDuration(Number(e.target.value))}
+                >
+                  {DURATION_OPTIONS.map((d) => (
+                    <option key={d} value={d}>
+                      {d} min
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            <div className="text-sm text-zinc-600">
+              Fin:{" "}
+              <b>
+                {hhmm(addMinutes(new Date(mobileDay.setHours(Number(mobileStartHHMM.split(":")[0]), Number(mobileStartHHMM.split(":")[1]), 0, 0)), mobileDuration))}
+              </b>
+            </div>
+
+            <div className="flex gap-2">
+              <button
+                className="flex-1 border rounded-md p-2"
+                onClick={() => setMobilePickOpen(false)}
+              >
+                Cancelar
+              </button>
+              <button
+                className="flex-1 bg-black text-white rounded-md p-2"
+                onClick={() => {
+                  // Re-creamos el día sin mutarlo
+                  const day = new Date(mobileDay);
+                  openCreateFromDayAndTime(day, mobileStartHHMM, mobileDuration);
+                  setMobilePickOpen(false);
+                }}
+              >
+                Continuar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal CREAR (el tuyo) */}
       {createSlot && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center p-4">
           <div className="bg-white w-full max-w-lg rounded-xl p-4 space-y-3">
@@ -463,7 +606,7 @@ export default function AgendaPage() {
                   />
                 </div>
                 <div className="text-sm text-zinc-500 flex items-end">
-                  (Puedes arrastrar para elegir duración)
+                  (En móvil eliges hora en lista)
                 </div>
               </div>
 
@@ -492,7 +635,7 @@ export default function AgendaPage() {
         </div>
       )}
 
-      {/* Modal EDITAR */}
+      {/* Modal EDITAR (el tuyo) */}
       {editEvent && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center p-4">
           <div className="bg-white w-full max-w-lg rounded-xl p-4 space-y-3">
