@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
+import { useRouter } from "next/navigation";
 
 type Client = {
   id: string;
@@ -19,7 +20,13 @@ function normalizePhoneES(input: string): string | null {
   return digits;
 }
 
+function isUuid(v: string) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(v);
+}
+
 export default function ClientesPage() {
+  const router = useRouter();
+
   const [items, setItems] = useState<Client[]>([]);
   const [loading, setLoading] = useState(true);
   const [msg, setMsg] = useState<string>("");
@@ -81,7 +88,7 @@ export default function ClientesPage() {
     const name = fullName.trim();
     if (!name) return;
 
-    const phoneValue = phone.trim() || "";
+    const phoneValue = phone.trim();
     const phoneNorm = phoneValue ? normalizePhoneES(phoneValue) : null;
 
     if (phoneNorm) {
@@ -137,7 +144,7 @@ export default function ClientesPage() {
       return;
     }
 
-    const phoneValue = ePhone.trim() || "";
+    const phoneValue = ePhone.trim();
     const phoneNorm = phoneValue ? normalizePhoneES(phoneValue) : null;
 
     if (phoneNorm) {
@@ -181,6 +188,13 @@ export default function ClientesPage() {
     await load();
   }
 
+  function goToClient(id: any) {
+    const safe = typeof id === "string" ? id : String(id ?? "");
+    if (!safe || safe === "undefined" || safe === "null") return;
+    if (!isUuid(safe)) return; // evita navegar con valores raros
+    router.push(`/clientes/${safe}`);
+  }
+
   const count = useMemo(() => items.length, [items]);
 
   if (loading) return <div className="p-4">Cargando…</div>;
@@ -213,10 +227,7 @@ export default function ClientesPage() {
             <div
               key={c.id}
               className="p-3 flex items-start gap-3 hover:bg-zinc-50 cursor-pointer"
-              onClick={() => {
-                if (!c.id) return;
-                window.location.href = `/clientes/${c.id}`;
-              }}
+              onClick={() => goToClient(c.id)}
             >
               <div className="flex-1">
                 <div className="font-medium">{c.full_name}</div>
