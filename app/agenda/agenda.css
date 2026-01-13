@@ -1,148 +1,160 @@
-/* --- Base --- */
+/* ===============================
+   Agenda – Estilos personalizados
+   =============================== */
+
+/* Fondo general */
 .rbc-calendar {
-    font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Arial, "Noto Sans";
+    font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+      Roboto, Ubuntu, "Helvetica Neue", Arial, "Noto Sans", sans-serif;
   }
   
-  /* --- Toolbar --- */
+  /* Encabezados de días */
+  .rbc-header {
+    padding: 8px 6px;
+    font-weight: 600;
+    font-size: 0.85rem;
+    text-transform: capitalize;
+    background: #fafafa;
+    border-bottom: 1px solid #e5e7eb;
+  }
+  
+  /* Hora lateral */
+  .rbc-time-header-gutter,
+  .rbc-time-gutter {
+    font-size: 0.75rem;
+    color: #6b7280;
+  }
+  
+  /* Líneas horarias */
+  .rbc-timeslot-group {
+    border-bottom: 1px solid #f1f5f9;
+  }
+  
+  /* Eventos normales */
+  .rbc-event {
+    padding: 4px 6px;
+    border-radius: 6px;
+    font-size: 0.75rem;
+    line-height: 1.15;
+    border: none;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+  }
+  
+  /* Hover eventos */
+  .rbc-event:hover {
+    filter: brightness(1.05);
+  }
+  
+  /* Evento seleccionado */
+  .rbc-selected {
+    outline: 2px solid rgba(0, 0, 0, 0.15);
+  }
+  
+  /* ===============================
+     Festivos y domingos
+     =============================== */
+  
+  /* Fondo festivos */
+  .rbc-day-bg.is-holiday,
+  .rbc-time-view .rbc-day-slot.is-holiday,
+  .rbc-month-view .rbc-day-bg.is-holiday {
+    background: rgba(220, 38, 38, 0.08);
+  }
+  
+  /* Fondo domingos */
+  .rbc-day-bg.is-sunday,
+  .rbc-time-view .rbc-day-slot.is-sunday,
+  .rbc-month-view .rbc-day-bg.is-sunday {
+    background: rgba(220, 38, 38, 0.05);
+  }
+  
+  /* Evento festivo (todo el día) */
+  .rbc-event.is-holiday-event {
+    background: rgba(220, 38, 38, 0.9);
+    border-color: rgba(220, 38, 38, 1);
+    color: #ffffff;
+    font-weight: 600;
+    text-align: center;
+  }
+  
+  /* ===============================
+     Vista mensual
+     =============================== */
+  
+  /* Celdas del mes */
+  .rbc-month-view {
+    border-radius: 12px;
+    overflow: hidden;
+  }
+  
+  /* Número del día */
+  .rbc-date-cell {
+    padding: 4px;
+    font-size: 0.75rem;
+    color: #374151;
+  }
+  
+  /* Hoy */
+  .rbc-today {
+    background: rgba(59, 130, 246, 0.08);
+  }
+  
+  /* ===============================
+     Toolbar (arriba)
+     =============================== */
+  
   .rbc-toolbar {
-    display: flex;
-    gap: 10px;
-    align-items: center;
-    justify-content: space-between;
-    padding: 12px 12px;
-    border: 1px solid rgba(0, 0, 0, 0.08);
-    border-radius: 14px;
-    background: white;
-    margin-bottom: 12px;
+    padding: 8px 0;
+    gap: 8px;
   }
   
-  .rbc-toolbar-label {
-    font-weight: 800;
-    font-size: 16px;
-  }
-  
-  /* --- Buttons --- */
-  .rbc-btn-group {
-    display: inline-flex;
-    gap: 6px;
-  }
-  
-  .rbc-btn-group button {
-    border: 1px solid rgba(0, 0, 0, 0.12);
-    background: white;
-    padding: 8px 10px;
-    border-radius: 10px;
-    font-size: 13px;
-    line-height: 1;
+  .rbc-toolbar button {
+    border-radius: 6px;
+    border: 1px solid #e5e7eb;
+    background: #ffffff;
+    padding: 4px 10px;
+    font-size: 0.75rem;
     cursor: pointer;
   }
   
-  .rbc-btn-group button:hover {
-    background: rgba(0, 0, 0, 0.03);
+  .rbc-toolbar button:hover {
+    background: #f9fafb;
   }
   
-  .rbc-btn-group button.rbc-active {
-    background: rgba(0, 0, 0, 0.08);
-    border-color: rgba(0, 0, 0, 0.18);
+  .rbc-toolbar button.rbc-active {
+    background: #111827;
+    color: #ffffff;
+    border-color: #111827;
   }
   
-  /* --- Calendar shell --- */
-  .rbc-time-view,
-  .rbc-month-view {
-    border-radius: 14px;
-    border: 1px solid rgba(0, 0, 0, 0.08);
-    overflow: hidden;
-    background: white;
+  /* Título mes / semana */
+  .rbc-toolbar-label {
+    font-weight: 600;
+    font-size: 0.9rem;
   }
   
-  /* --- Headers --- */
-  .rbc-header {
-    padding: 10px 6px;
-    font-weight: 700;
-    font-size: 12px;
-    background: rgba(0, 0, 0, 0.02);
-    border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+  /* ===============================
+     Selección de slots
+     =============================== */
+  
+  .rbc-slot-selection {
+    background: rgba(0, 0, 0, 0.1);
   }
   
-  /* --- Time gutter (hours) --- */
-  .rbc-time-gutter,
-  .rbc-label {
-    font-size: 12px;
-    color: rgba(0, 0, 0, 0.65);
+  /* ===============================
+     Scroll más fino
+     =============================== */
+  
+  .rbc-time-content {
+    scrollbar-width: thin;
   }
   
-  /* --- Grid lines / cells --- */
-  .rbc-time-content > * + * {
-    border-left: 1px solid rgba(0, 0, 0, 0.06);
+  .rbc-time-content::-webkit-scrollbar {
+    width: 6px;
   }
   
-  .rbc-day-bg + .rbc-day-bg {
-    border-left: 1px solid rgba(0, 0, 0, 0.06);
-  }
-  
-  .rbc-timeslot-group {
-    border-bottom: 1px solid rgba(0, 0, 0, 0.06);
-  }
-  
-  .rbc-time-header-content {
-    border-left: 1px solid rgba(0, 0, 0, 0.06);
-  }
-  
-  /* --- Today highlight (subtle) --- */
-  .rbc-today {
-    background: rgba(0, 0, 0, 0.02);
-  }
-  
-  /* --- Events (cleaner “pill” look) --- */
-  .rbc-event {
-    border-radius: 10px;
-    padding: 4px 6px;
-    border: 1px solid rgba(0, 0, 0, 0.12);
-    box-shadow: 0 1px 0 rgba(0, 0, 0, 0.04);
-  }
-  
-  .rbc-event-label {
-    font-size: 11px;
-    opacity: 0.85;
-  }
-  
-  .rbc-event-content {
-    font-size: 12px;
-    font-weight: 700;
-  }
-  
-  /* Selected event */
-  .rbc-selected {
-    outline: 2px solid rgba(0, 0, 0, 0.18);
-  }
-  
-  /* --- Month view tweaks --- */
-  .rbc-month-row + .rbc-month-row {
-    border-top: 1px solid rgba(0, 0, 0, 0.06);
-  }
-  
-  .rbc-date-cell {
-    padding: 6px;
-    font-size: 12px;
-    color: rgba(0, 0, 0, 0.7);
-  }
-  
-  /* --- Agenda (list view) --- */
-  .rbc-agenda-view table.rbc-agenda-table {
-    border: 1px solid rgba(0, 0, 0, 0.08);
-    border-radius: 14px;
-    overflow: hidden;
-  }
-  
-  /* --- Small screens --- */
-  @media (max-width: 640px) {
-    .rbc-toolbar {
-      flex-direction: column;
-      align-items: stretch;
-    }
-    .rbc-btn-group {
-      justify-content: center;
-      flex-wrap: wrap;
-    }
+  .rbc-time-content::-webkit-scrollbar-thumb {
+    background: rgba(0, 0, 0, 0.15);
+    border-radius: 999px;
   }
   
