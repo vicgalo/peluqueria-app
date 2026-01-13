@@ -5,17 +5,26 @@ import { supabase } from "@/lib/supabaseClient";
 
 type ParsedContact = { full_name: string; phone: string | null };
 
+function normalizePhoneES(input: string): string | null {
+  const digits = (input || "").replace(/\D/g, "");
+  if (!digits) return null;
+  if (digits.length === 9) return `34${digits}`;
+  return digits;
+}
+
 function parseVCF(text: string): ParsedContact[] {
   const cards = text.split("END:VCARD");
   const out: ParsedContact[] = [];
 
   for (const card of cards) {
-    const lines = card.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+    const lines = card
+      .split(/\r?\n/)
+      .map((l) => l.trim())
+      .filter(Boolean);
+
     if (!lines.some((l) => l.startsWith("BEGIN:VCARD"))) continue;
 
-    const fn = (lines.find((l) => l.startsWith("FN:")) || "")
-      .replace("FN:", "")
-      .trim();
+    const fn = (lines.find((l) => l.startsWith("FN:")) || "").replace("FN:", "").trim();
 
     const telLine =
       lines.find((l) => l.startsWith("TEL:")) ||
@@ -28,6 +37,23 @@ function parseVCF(text: string): ParsedContact[] {
   }
 
   return out;
+}
+
+async function fetchExistingPhoneNorms(norms: string[]) {
+  // Obtiene los phone_norm existentes en tu usuario (RLS lo limita)
+  const existing = new Set<string>();
+
+  const chunkSize = 500;
+  for (let i = 0; i < norms.length; i += chunkSize) {
+    const chunk = norms.slice(i, i + chunkSize);
+    const { data, error } = await supabase.from("clients").select("phone_norm").in("phone_norm", chunk);
+    if (error) throw new Error(error.message);
+    (data ?? []).forEach((r: any) => {
+      if (r.phone_norm) existing.add(r.phone_norm);
+    });
+  }
+
+  return existing;
 }
 
 export default function ImportarPage() {
@@ -57,7 +83,6 @@ export default function ImportarPage() {
   async function onImport() {
     setLoading(true);
     setMsg("");
-
     try {
       const { data } = await supabase.auth.getSession();
       if (!data.session) {
@@ -70,40 +95,51 @@ export default function ImportarPage() {
         return;
       }
 
-      // 1) Normalizar teléfonos: quitar espacios
-      const normalized = all.map((c) => ({
-        ...c,
-        phone: c.phone ? c.phone.replace(/\s+/g, "") : null,
-      }));
+      // 1) Normalizamos teléfonos y limpiamos duplicados dentro del archivo
+      let noPhone = 0;
+      let dupInFile = 0;
 
-      // 2) Sacar teléfonos a comprobar
-      const phones = normalized.map((c) => c.phone).filter(Boolean) as string[];
+      const seen = new Set<string>(); // phone_norm
+      const cleaned: { full_name: string; phone: string | null; phone_norm: string | null }[] = [];
 
-      // 3) Consultar cuáles ya existen (RLS lo limita a tu usuario)
-      const existingPhones = new Set<string>();
+      for (const c of all) {
+        const full_name = c.full_name.trim();
+        const phoneVal = (c.phone || "").trim() || null;
+        const norm = phoneVal ? normalizePhoneES(phoneVal) : null;
 
-      if (phones.length > 0) {
-        // Si hay muchísimos, evitamos query enorme
-        const chunkSize = 500;
-        for (let i = 0; i < phones.length; i += chunkSize) {
-          const chunk = phones.slice(i, i + chunkSize);
-          const { data: existing, error } = await supabase
-            .from("clients")
-            .select("phone")
-            .in("phone", chunk);
-
-          if (error) throw new Error(error.message);
-
-          existing?.forEach((e) => {
-            if (e.phone) existingPhones.add(e.phone);
-          });
+        if (!norm) {
+          noPhone++;
+          cleaned.push({ full_name, phone: phoneVal, phone_norm: null });
+          continue;
         }
+
+        if (seen.has(norm)) {
+          dupInFile++;
+          continue;
+        }
+
+        seen.add(norm);
+        cleaned.push({ full_name, phone: phoneVal, phone_norm: norm });
       }
 
-      // 4) Filtrar: solo nuevos (con teléfono). Los que no tengan teléfono se saltan.
-      const toInsert = normalized.filter((c) => c.phone && !existingPhones.has(c.phone));
+      // 2) Detectar cuáles ya existen en BD (por phone_norm)
+      const norms = cleaned.map((x) => x.phone_norm).filter(Boolean) as string[];
+      const existing = norms.length ? await fetchExistingPhoneNorms(norms) : new Set<string>();
 
-      // 5) Insertar en batches
+      let dupInDb = 0;
+      const toInsert = cleaned.filter((x) => {
+        if (!x.phone_norm) return true; // sin teléfono -> permitimos
+        if (existing.has(x.phone_norm)) {
+          dupInDb++;
+          return false;
+        }
+        return true;
+      });
+
+      // 3) Insertar en batches (si hay carrera y salta unique, fallback a uno-a-uno)
+      let inserted = 0;
+      let failed = 0;
+
       const batchSize = 200;
       for (let i = 0; i < toInsert.length; i += batchSize) {
         const chunk = toInsert.slice(i, i + batchSize).map((c) => ({
@@ -111,18 +147,48 @@ export default function ImportarPage() {
           phone: c.phone,
           instagram: null,
           notes: null,
-          // NO ponemos owner_id: lo pone el trigger + RLS
+          phone_norm: c.phone_norm, // trigger también lo rellena
         }));
 
         const { error } = await supabase.from("clients").insert(chunk);
-        if (error) throw new Error(error.message);
+
+        if (!error) {
+          inserted += chunk.length;
+          continue;
+        }
+
+        // Si hay error de unique (23505) o cualquier otro, intentamos insertar uno a uno para no parar
+        for (const one of chunk) {
+          const { error: e2 } = await supabase.from("clients").insert(one);
+          if (!e2) {
+            inserted++;
+          } else {
+            if ((e2 as any)?.code === "23505") {
+              // duplicado (probablemente carrera)
+              dupInDb++;
+            } else {
+              failed++;
+            }
+          }
+        }
       }
 
-      const skipped = normalized.length - toInsert.length;
-      const skippedNoPhone = normalized.filter((c) => !c.phone).length;
+      const totalParsed = all.length;
+      const totalAttempt = toInsert.length;
 
       setMsg(
-        `✅ Importados ${toInsert.length} · ⏭️ ${skipped} saltados (incluye ${skippedNoPhone} sin teléfono)`
+        [
+          `✅ Importación completada.`,
+          `Detectados: ${totalParsed}`,
+          `Importados: ${inserted}`,
+          `Saltados (duplicado en archivo): ${dupInFile}`,
+          `Saltados (ya existían): ${dupInDb}`,
+          `Sin teléfono: ${noPhone}`,
+          failed ? `Fallos: ${failed}` : null,
+          `Intentados (tras filtrar duplicados): ${totalAttempt}`,
+        ]
+          .filter(Boolean)
+          .join(" · ")
       );
     } catch (e: any) {
       setMsg(`❌ ${e?.message ?? "Error importando."}`);
@@ -139,7 +205,7 @@ export default function ImportarPage() {
         <p className="text-sm text-zinc-600">
           Sube un archivo <b>.vcf</b> (vCard). Se importará solo en el usuario con el que has iniciado sesión.
           <br />
-          Evita duplicados por <b>teléfono</b>.
+          Detecta duplicados por teléfono (normalizado) y los salta.
         </p>
 
         <input type="file" accept=".vcf,text/vcard" onChange={(e) => onPick(e.target.files?.[0])} />

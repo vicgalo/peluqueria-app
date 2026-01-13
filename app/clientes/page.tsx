@@ -25,10 +25,20 @@ export default function ClientesPage() {
   const [loading, setLoading] = useState(true);
   const [msg, setMsg] = useState<string>("");
 
+  // Form crear
   const [fullName, setFullName] = useState("");
   const [phone, setPhone] = useState("");
   const [instagram, setInstagram] = useState("");
   const [notes, setNotes] = useState("");
+
+  // Editar (modal)
+  const [editOpen, setEditOpen] = useState(false);
+  const [editId, setEditId] = useState<string | null>(null);
+  const [eFullName, setEFullName] = useState("");
+  const [ePhone, setEPhone] = useState("");
+  const [eInstagram, setEInstagram] = useState("");
+  const [eNotes, setENotes] = useState("");
+  const [eMsg, setEMsg] = useState("");
 
   async function guardAuth() {
     const { data } = await supabase.auth.getSession();
@@ -53,42 +63,46 @@ export default function ClientesPage() {
     })();
   }, []);
 
+  async function checkDuplicatePhone(phoneNorm: string, excludeId?: string | null) {
+    let q = supabase
+      .from("clients")
+      .select("id, full_name, phone")
+      .eq("phone_norm", phoneNorm)
+      .limit(1);
+
+    if (excludeId) q = q.neq("id", excludeId);
+
+    const { data, error } = await q;
+    if (error) throw new Error(error.message);
+    return data && data.length > 0 ? data[0] : null;
+  }
+
   async function addClient() {
     setMsg("");
     const name = fullName.trim();
     if (!name) return;
 
-    const phoneValue = phone.trim() || null;
+    const phoneValue = phone.trim() || "";
     const phoneNorm = phoneValue ? normalizePhoneES(phoneValue) : null;
 
-    // 1) Detección de duplicado en app (solo si hay teléfono)
+    // Aviso duplicado (app)
     if (phoneNorm) {
-      const { data: dup, error: dupErr } = await supabase
-        .from("clients")
-        .select("id, full_name, phone")
-        .eq("phone_norm", phoneNorm)
-        .limit(1);
-
-      if (dupErr) {
-        console.error(dupErr);
-      } else if (dup && dup.length > 0) {
-        setMsg(`⚠️ Este teléfono ya existe: ${dup[0].full_name} (${dup[0].phone ?? ""}).`);
+      const dup = await checkDuplicatePhone(phoneNorm, null);
+      if (dup) {
+        setMsg(`⚠️ Este teléfono ya existe: ${dup.full_name} (${dup.phone ?? ""}).`);
         return;
       }
     }
 
-    // 2) Insert
     const { error } = await supabase.from("clients").insert({
       full_name: name,
-      phone: phoneValue,
+      phone: phoneValue.trim() || null,
       instagram: instagram.trim() || null,
       notes: notes.trim() || null,
-      // phone_norm lo pone el trigger (pero si no existiera, igual lo calculamos aquí)
-      phone_norm: phoneNorm,
+      phone_norm: phoneNorm, // trigger también lo pone, pero lo dejamos
     });
 
     if (error) {
-      // Si salta el unique index
       if ((error as any)?.code === "23505") {
         setMsg("⚠️ No se ha guardado: ya existe un cliente con ese teléfono.");
       } else {
@@ -103,6 +117,64 @@ export default function ClientesPage() {
     setNotes("");
     setMsg("✅ Cliente añadido.");
     await load();
+  }
+
+  function openEdit(c: Client) {
+    setEditId(c.id);
+    setEFullName(c.full_name ?? "");
+    setEPhone(c.phone ?? "");
+    setEInstagram(c.instagram ?? "");
+    setENotes(c.notes ?? "");
+    setEMsg("");
+    setEditOpen(true);
+  }
+
+  async function saveEdit() {
+    setEMsg("");
+    if (!editId) return;
+
+    const name = eFullName.trim();
+    if (!name) {
+      setEMsg("⚠️ El nombre es obligatorio.");
+      return;
+    }
+
+    const phoneValue = ePhone.trim() || "";
+    const phoneNorm = phoneValue ? normalizePhoneES(phoneValue) : null;
+
+    // Aviso duplicado (app) excluyendo el mismo cliente
+    if (phoneNorm) {
+      const dup = await checkDuplicatePhone(phoneNorm, editId);
+      if (dup) {
+        setEMsg(`⚠️ Ese teléfono ya lo tiene: ${dup.full_name} (${dup.phone ?? ""}).`);
+        return;
+      }
+    }
+
+    const { error } = await supabase
+      .from("clients")
+      .update({
+        full_name: name,
+        phone: phoneValue.trim() || null,
+        instagram: eInstagram.trim() || null,
+        notes: eNotes.trim() || null,
+        phone_norm: phoneNorm,
+      })
+      .eq("id", editId);
+
+    if (error) {
+      if ((error as any)?.code === "23505") {
+        setEMsg("⚠️ No se ha guardado: ya existe otro cliente con ese teléfono.");
+      } else {
+        setEMsg(`❌ Error: ${error.message}`);
+      }
+      return;
+    }
+
+    setEditOpen(false);
+    setEditId(null);
+    await load();
+    setMsg("✅ Cliente actualizado.");
   }
 
   async function delClient(id: string) {
@@ -155,7 +227,7 @@ export default function ClientesPage() {
 
         {msg && <div className="text-sm text-zinc-700">{msg}</div>}
         <div className="text-xs text-zinc-500">
-          Tip: detecta duplicados aunque escribas el teléfono con espacios o guiones. Si pones 9 dígitos, asume España (+34).
+          Detecta duplicados aunque escribas el teléfono con espacios o guiones. Si pones 9 dígitos, asume España (+34).
         </div>
       </div>
 
@@ -171,6 +243,10 @@ export default function ClientesPage() {
                 </div>
                 {c.notes && <div className="text-sm text-zinc-500 mt-1">{c.notes}</div>}
               </div>
+
+              <button className="border rounded-md px-3 py-1" onClick={() => openEdit(c)}>
+                Editar
+              </button>
               <button className="border rounded-md px-3 py-1" onClick={() => delClient(c.id)}>
                 Eliminar
               </button>
@@ -178,6 +254,39 @@ export default function ClientesPage() {
           ))}
         </div>
       </div>
+
+      {/* Modal Editar */}
+      {editOpen && (
+        <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4">
+          <div className="bg-white w-full max-w-lg rounded-xl p-4 space-y-3 shadow-2xl ring-1 ring-black/10">
+            <h2 className="font-semibold">Editar cliente</h2>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <input className="border rounded-md p-2" value={eFullName} onChange={(e) => setEFullName(e.target.value)} />
+              <input className="border rounded-md p-2" value={ePhone} onChange={(e) => setEPhone(e.target.value)} placeholder="Teléfono (opcional)" />
+              <input className="border rounded-md p-2" value={eInstagram} onChange={(e) => setEInstagram(e.target.value)} placeholder="Instagram (opcional)" />
+              <input className="border rounded-md p-2" value={eNotes} onChange={(e) => setENotes(e.target.value)} placeholder="Notas (opcional)" />
+            </div>
+
+            {eMsg && <div className="text-sm text-zinc-700">{eMsg}</div>}
+
+            <div className="flex gap-2">
+              <button
+                className="flex-1 border rounded-md p-2"
+                onClick={() => {
+                  setEditOpen(false);
+                  setEditId(null);
+                }}
+              >
+                Cancelar
+              </button>
+              <button className="flex-1 bg-black text-white rounded-md p-2" onClick={saveEdit}>
+                Guardar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </main>
   );
 }
