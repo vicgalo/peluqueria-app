@@ -18,6 +18,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                 <a className="hover:underline" href="/clientes">Clientes</a>
                 <a className="hover:underline" href="/servicios">Servicios</a>
                 <a className="hover:underline" href="/caja">Caja</a>
+                <a className="hover:underline" href="/ajustes/crear-usuario">Crear usuario</a>
               </nav>
               <div className="ml-auto text-sm text-zinc-500">Local</div>
             </div>
