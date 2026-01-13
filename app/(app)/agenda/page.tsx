@@ -1,7 +1,7 @@
 "use client";
 
 import "react-big-calendar/lib/css/react-big-calendar.css";
-import "@/app/agenda/agenda.css";
+import "./agenda.css";
 
 import { Calendar, dateFnsLocalizer, Views } from "react-big-calendar";
 import { format, parse, startOfWeek, getDay, addMinutes } from "date-fns";
@@ -67,7 +67,7 @@ type Service = {
   id: string;
   name: string;
   default_duration_min: number; // total
-  active_duration_min: number;  // activo
+  active_duration_min: number; // activo
   default_price: number;
 };
 
@@ -96,7 +96,9 @@ type EventT = {
 
 function toLocalInputValue(d: Date) {
   const pad = (n: number) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(
+    d.getHours()
+  )}:${pad(d.getMinutes())}`;
 }
 
 /* ───────────── Helpers ───────────── */
@@ -119,7 +121,11 @@ function startOfDayOnly(d: Date) {
   return x;
 }
 function sameDay(a: Date, b: Date) {
-  return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+  return (
+    a.getFullYear() === b.getFullYear() &&
+    a.getMonth() === b.getMonth() &&
+    a.getDate() === b.getDate()
+  );
 }
 function parseHHMM(hhmm: string) {
   const [hh, mm] = hhmm.split(":").map(Number);
@@ -133,7 +139,9 @@ export default function AgendaPage() {
   const [services, setServices] = useState<Service[]>([]);
 
   // Crear (modal principal)
-  const [createSlot, setCreateSlot] = useState<null | { start: Date; end: Date }>(null);
+  const [createSlot, setCreateSlot] = useState<null | { start: Date; end: Date }>(
+    null
+  );
   const [createClientId, setCreateClientId] = useState<string>("__new__");
   const [createClientName, setCreateClientName] = useState("");
   const [createServiceId, setCreateServiceId] = useState<string>("__new__");
@@ -150,7 +158,8 @@ export default function AgendaPage() {
   const [editNotes, setEditNotes] = useState("");
   const [editStatus, setEditStatus] = useState<Row["status"]>("reserved");
   const [editPaid, setEditPaid] = useState(false);
-  const [editPaymentMethod, setEditPaymentMethod] = useState<Row["payment_method"]>(null);
+  const [editPaymentMethod, setEditPaymentMethod] =
+    useState<Row["payment_method"]>(null);
 
   const [saving, setSaving] = useState(false);
 
@@ -160,7 +169,7 @@ export default function AgendaPage() {
   const [mobileDay, setMobileDay] = useState<Date | null>(null);
   const [mobileStartHHMM, setMobileStartHHMM] = useState("09:00");
   const [mobileDuration, setMobileDuration] = useState<number>(30); // total
-  const [mobileActive, setMobileActive] = useState<number>(30);     // activo
+  const [mobileActive, setMobileActive] = useState<number>(30); // activo
   const [mobileServiceId, setMobileServiceId] = useState<string>(""); // opcional
 
   useEffect(() => {
@@ -170,25 +179,20 @@ export default function AgendaPage() {
     return () => window.removeEventListener("resize", check);
   }, []);
 
-  const holidayEvents: any[] = useMemo(() => {
-    return HOLIDAYS_2026.map((h) => {
-      const start = new Date(`${h.date}T00:00:00`);
-      const end = new Date(start);
-      end.setDate(end.getDate() + 1);
-      return { id: `holiday-${h.date}`, title: `🎉 ${h.name}`, start, end, allDay: true, isHoliday: true };
-    });
-  }, []);
-
   const eventStyleGetter = useMemo(
     () => (event: any) => {
-      if (event?.isHoliday) return { className: "is-holiday-event text-white rounded-md" };
+      if (event?.isHoliday)
+        return { className: "is-holiday-event text-white rounded-md" };
+
       const s = event?.raw?.status;
       const paid = event?.raw?.paid;
+
       let bg = "bg-gray-900";
       if (s === "done") bg = "bg-green-700";
       if (s === "cancelled") bg = "bg-gray-500";
       if (s === "no_show") bg = "bg-red-700";
       if (paid) bg = "bg-blue-700";
+
       return { className: `${bg} text-white rounded-md` };
     },
     []
@@ -201,7 +205,10 @@ export default function AgendaPage() {
 
   async function loadLists() {
     const [cRes, sRes] = await Promise.all([
-      supabase.from("clients").select("id, full_name, phone").order("full_name", { ascending: true }),
+      supabase
+        .from("clients")
+        .select("id, full_name, phone")
+        .order("full_name", { ascending: true }),
       supabase
         .from("services")
         .select("id, name, default_duration_min, active_duration_min, default_price")
@@ -224,12 +231,15 @@ export default function AgendaPage() {
       .order("start_time", { ascending: true });
 
     if (error) console.error(error);
+
     const rows = (data ?? []) as unknown as Row[];
 
     setEvents(
       rows.map((r) => ({
         id: r.id,
-        title: `${r.clients?.full_name ?? "Cliente"} · ${r.services?.name ?? "Servicio"}`,
+        title: `${r.clients?.full_name ?? "Cliente"} · ${
+          r.services?.name ?? "Servicio"
+        }`,
         start: new Date(r.start_time),
         end: new Date(r.end_time),
         raw: r,
@@ -250,7 +260,11 @@ export default function AgendaPage() {
     if (createClientId !== "__new__") return createClientId;
     const name = createClientName.trim();
     if (!name) throw new Error("Indica el nombre del cliente.");
-    const { data, error } = await supabase.from("clients").insert({ full_name: name }).select("id").single();
+    const { data, error } = await supabase
+      .from("clients")
+      .insert({ full_name: name })
+      .select("id")
+      .single();
     if (error) throw new Error(error.message);
     return data.id as string;
   }
@@ -261,7 +275,12 @@ export default function AgendaPage() {
     if (!name) throw new Error("Indica el nombre del servicio.");
     const { data, error } = await supabase
       .from("services")
-      .insert({ name, default_duration_min: 30, active_duration_min: 30, default_price: 0 })
+      .insert({
+        name,
+        default_duration_min: 30,
+        active_duration_min: 30,
+        default_price: 0,
+      })
       .select("id")
       .single();
     if (error) throw new Error(error.message);
@@ -291,6 +310,7 @@ export default function AgendaPage() {
     if (!createSlot) return;
     setCreateErr(null);
     setSaving(true);
+
     try {
       const clientId = await getOrCreateClientId();
       const serviceId = await getOrCreateServiceId();
@@ -309,6 +329,7 @@ export default function AgendaPage() {
         paid: false,
         payment_method: null,
       });
+
       if (error) throw new Error(error.message);
 
       setCreateSlot(null);
@@ -332,16 +353,18 @@ export default function AgendaPage() {
   const busyIntervals = useMemo(() => {
     if (!mobileDay) return [];
     const day = startOfDayOnly(mobileDay);
-
     const todays = events.filter((e) => sameDay(e.start, day));
 
     return todays.map((e) => {
       const activeMinFromService = e.raw.services?.active_duration_min ?? null;
-      const totalMin = Math.max(1, Math.round((e.end.getTime() - e.start.getTime()) / 60000));
-      const activeMin = Math.min(activeMinFromService ?? totalMin, totalMin); // clamp
+      const totalMin = Math.max(
+        1,
+        Math.round((e.end.getTime() - e.start.getTime()) / 60000)
+      );
+      const activeMin = Math.min(activeMinFromService ?? totalMin, totalMin);
       return {
         start: new Date(e.start),
-        end: addMinutes(new Date(e.start), activeMin), // 👈 solo bloquea activo
+        end: addMinutes(new Date(e.start), activeMin), // solo bloquea activo
       };
     });
   }, [events, mobileDay]);
@@ -353,7 +376,7 @@ export default function AgendaPage() {
     const businessEnd = new Date(day);
     businessEnd.setHours(20, 0, 0, 0);
 
-    const activeToBlock = Math.max(1, Math.min(mobileActive, mobileDuration)); // clamp
+    const activeToBlock = Math.max(1, Math.min(mobileActive, mobileDuration));
 
     const isFree = (hhmmStr: string) => {
       const { hh, mm } = parseHHMM(hhmmStr);
@@ -363,10 +386,8 @@ export default function AgendaPage() {
       const endTotal = addMinutes(start, mobileDuration);
       const endActive = addMinutes(start, activeToBlock);
 
-      // No permitir que el total se pase de 20:00
       if (endTotal > businessEnd) return false;
 
-      // Solape SOLO con bloque activo
       for (const b of busyIntervals) {
         if (start < b.end && endActive > b.start) return false;
       }
@@ -425,8 +446,13 @@ export default function AgendaPage() {
 
       {isMobile && (
         <div className="border rounded-xl bg-white p-3 flex items-center gap-2">
-          <div className="text-sm text-zinc-600">En móvil: toca un día/casilla o usa “Nueva cita”.</div>
-          <button className="ml-auto bg-black text-white rounded-md px-3 py-2" onClick={() => openMobilePickerForDate(new Date())}>
+          <div className="text-sm text-zinc-600">
+            En móvil: toca un día/casilla o usa “Nueva cita”.
+          </div>
+          <button
+            className="ml-auto bg-black text-white rounded-md px-3 py-2"
+            onClick={() => openMobilePickerForDate(new Date())}
+          >
             Nueva cita
           </button>
         </div>
@@ -437,14 +463,17 @@ export default function AgendaPage() {
           localizer={localizer}
           culture="es"
           messages={messages}
-          events={[...HOLIDAYS_2026.map(h => ({
-            id: `holiday-${h.date}`,
-            title: `🎉 ${h.name}`,
-            start: new Date(`${h.date}T00:00:00`),
-            end: new Date(`${h.date}T23:59:59`),
-            allDay: true,
-            isHoliday: true,
-          })), ...events]}
+          events={[
+            ...HOLIDAYS_2026.map((h) => ({
+              id: `holiday-${h.date}`,
+              title: `🎉 ${h.name}`,
+              start: new Date(`${h.date}T00:00:00`),
+              end: new Date(`${h.date}T23:59:59`),
+              allDay: true,
+              isHoliday: true,
+            })),
+            ...events,
+          ]}
           defaultView={Views.WEEK}
           views={[Views.DAY, Views.WEEK, Views.MONTH]}
           popup
@@ -485,7 +514,7 @@ export default function AgendaPage() {
         />
       </div>
 
-      {/* Modal selector móvil: ahora elige SERVICIO para saber minutos activos */}
+      {/* Modal selector móvil */}
       {mobilePickOpen && mobileDay && (
         <div className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-4">
           <div className="w-full max-w-md rounded-2xl shadow-2xl ring-1 ring-black/10 bg-white opacity-100 p-4 space-y-3">
@@ -517,7 +546,8 @@ export default function AgendaPage() {
                 <option value="">(Opcional) Sin servicio</option>
                 {services.map((s) => (
                   <option key={s.id} value={s.id}>
-                    {s.name} · total {s.default_duration_min} · activo {s.active_duration_min ?? s.default_duration_min}
+                    {s.name} · total {s.default_duration_min} · activo{" "}
+                    {s.active_duration_min ?? s.default_duration_min}
                   </option>
                 ))}
               </select>
@@ -556,7 +586,6 @@ export default function AgendaPage() {
                   onChange={(e) => {
                     const v = Number(e.target.value);
                     setMobileDuration(v);
-                    // si duración baja, clamp activo
                     setMobileActive((a) => Math.min(a, v));
                   }}
                 >
@@ -570,14 +599,17 @@ export default function AgendaPage() {
             </div>
 
             {availableStartTimes.length === 0 ? (
-              <div className="text-sm text-red-600">No hay huecos disponibles para esa duración/activo en este día.</div>
+              <div className="text-sm text-red-600">
+                No hay huecos disponibles para esa duración/activo en este día.
+              </div>
             ) : (
               <div className="text-sm text-zinc-700 space-y-1">
                 <div>
                   Fin total: <b>{mobileEndLabel}</b>
                 </div>
                 <div>
-                  Bloqueo activo hasta: <b>{mobileActiveLabel}</b> <span className="text-zinc-500">(puedes atender a otra persona después)</span>
+                  Bloqueo activo hasta: <b>{mobileActiveLabel}</b>{" "}
+                  <span className="text-zinc-500">(puedes atender a otra persona después)</span>
                 </div>
                 <div>
                   Huecos: <b>{availableStartTimes.length}</b>
@@ -586,14 +618,16 @@ export default function AgendaPage() {
             )}
 
             <div className="flex gap-2 pt-1">
-              <button className="flex-1 border rounded-md p-2" onClick={() => setMobilePickOpen(false)}>
+              <button
+                className="flex-1 border rounded-md p-2"
+                onClick={() => setMobilePickOpen(false)}
+              >
                 Cancelar
               </button>
               <button
                 className="flex-1 bg-black text-white rounded-md p-2"
                 disabled={availableStartTimes.length === 0}
                 onClick={() => {
-                  // Prefill del servicio en el modal principal
                   if (mobileServiceId) {
                     setCreateServiceId(mobileServiceId);
                     const s = services.find((x) => x.id === mobileServiceId);
@@ -613,19 +647,24 @@ export default function AgendaPage() {
         </div>
       )}
 
-      {/* Modal crear (igual que tenías) */}
+      {/* Modal crear */}
       {createSlot && (
         <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4">
           <div className="bg-white w-full max-w-lg rounded-xl p-4 space-y-3 shadow-2xl ring-1 ring-black/10">
             <h2 className="font-semibold">Nueva cita</h2>
             <p className="text-sm text-zinc-600">
-              {format(createSlot.start, "EEE dd/MM HH:mm", { locale: es })} → {format(createSlot.end, "HH:mm", { locale: es })}
+              {format(createSlot.start, "EEE dd/MM HH:mm", { locale: es })} →{" "}
+              {format(createSlot.end, "HH:mm", { locale: es })}
             </p>
 
             <div className="grid grid-cols-1 gap-3">
               <div>
                 <label className="text-sm font-medium">Cliente</label>
-                <select className="w-full border rounded-md p-2 bg-white" value={createClientId} onChange={(e) => setCreateClientId(e.target.value)}>
+                <select
+                  className="w-full border rounded-md p-2 bg-white"
+                  value={createClientId}
+                  onChange={(e) => setCreateClientId(e.target.value)}
+                >
                   <option value="__new__">+ Nuevo cliente…</option>
                   {clients.map((c) => (
                     <option key={c.id} value={c.id}>
@@ -634,7 +673,12 @@ export default function AgendaPage() {
                   ))}
                 </select>
                 {createClientId === "__new__" && (
-                  <input className="mt-2 w-full border rounded-md p-2" placeholder="Nombre del cliente" value={createClientName} onChange={(e) => setCreateClientName(e.target.value)} />
+                  <input
+                    className="mt-2 w-full border rounded-md p-2"
+                    placeholder="Nombre del cliente"
+                    value={createClientName}
+                    onChange={(e) => setCreateClientName(e.target.value)}
+                  />
                 )}
               </div>
 
@@ -658,31 +702,56 @@ export default function AgendaPage() {
                   ))}
                 </select>
                 {createServiceId === "__new__" && (
-                  <input className="mt-2 w-full border rounded-md p-2" placeholder="Nombre del servicio" value={createServiceName} onChange={(e) => setCreateServiceName(e.target.value)} />
+                  <input
+                    className="mt-2 w-full border rounded-md p-2"
+                    placeholder="Nombre del servicio"
+                    value={createServiceName}
+                    onChange={(e) => setCreateServiceName(e.target.value)}
+                  />
                 )}
               </div>
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="text-sm font-medium">Precio</label>
-                  <input className="w-full border rounded-md p-2" placeholder="(opcional)" value={createPrice} onChange={(e) => setCreatePrice(e.target.value)} />
+                  <input
+                    className="w-full border rounded-md p-2"
+                    placeholder="(opcional)"
+                    value={createPrice}
+                    onChange={(e) => setCreatePrice(e.target.value)}
+                  />
                 </div>
-                <div className="text-sm text-zinc-500 flex items-end">(El bloqueo usa “activo” del servicio)</div>
+                <div className="text-sm text-zinc-500 flex items-end">
+                  (El bloqueo usa “activo” del servicio)
+                </div>
               </div>
 
               <div>
                 <label className="text-sm font-medium">Notas</label>
-                <textarea className="w-full border rounded-md p-2" rows={3} value={createNotes} onChange={(e) => setCreateNotes(e.target.value)} />
+                <textarea
+                  className="w-full border rounded-md p-2"
+                  rows={3}
+                  value={createNotes}
+                  onChange={(e) => setCreateNotes(e.target.value)}
+                />
               </div>
             </div>
 
             {createErr && <p className="text-sm text-red-600">{createErr}</p>}
 
             <div className="flex gap-2">
-              <button className="flex-1 border rounded-md p-2" disabled={saving} onClick={() => setCreateSlot(null)}>
+              <button
+                className="flex-1 border rounded-md p-2"
+                disabled={saving}
+                onClick={() => setCreateSlot(null)}
+              >
                 Cancelar
               </button>
-              <button className="flex-1 bg-black text-white rounded-md p-2" disabled={saving} onClick={createAppointment}>
+              <button
+                className="flex-1 bg-black text-white rounded-md p-2"
+                disabled={saving}
+                onClick={createAppointment}
+              >
                 {saving ? "Guardando..." : "Guardar"}
               </button>
             </div>
