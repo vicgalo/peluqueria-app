@@ -16,7 +16,7 @@ const locales = { es };
 const localizer = dateFnsLocalizer({
   format,
   parse,
-  startOfWeek: () => startOfWeek(new Date(), { weekStartsOn: 1 }),
+  startOfWeek: () => startOfWeek(new Date(), { weekStartsOn: 1 }), // lunes
   getDay,
   locales,
 });
@@ -38,7 +38,7 @@ const messages = {
 };
 
 /* ─────────────────────────────
-   Festivos nacionales 2026
+   Festivos nacionales 2026 (con traslados típicos)
 ───────────────────────────── */
 function isoDate(d: Date) {
   const y = d.getFullYear();
@@ -47,16 +47,16 @@ function isoDate(d: Date) {
   return `${y}-${m}-${day}`;
 }
 
-const HOLIDAYS_2026 = [
+const HOLIDAYS_2026: { date: string; name: string }[] = [
   { date: "2026-01-01", name: "Año Nuevo" },
   { date: "2026-01-06", name: "Reyes Magos" },
   { date: "2026-04-03", name: "Viernes Santo" },
   { date: "2026-05-01", name: "Fiesta del Trabajo" },
   { date: "2026-08-15", name: "Asunción de la Virgen" },
   { date: "2026-10-12", name: "Fiesta Nacional de España" },
-  { date: "2026-11-01", name: "Todos los Santos" },
+  { date: "2026-11-01", name: "Todos los Santos" }, // domingo en 2026
   { date: "2026-11-02", name: "Traslado Todos los Santos" },
-  { date: "2026-12-06", name: "Día de la Constitución" },
+  { date: "2026-12-06", name: "Día de la Constitución" }, // domingo en 2026
   { date: "2026-12-07", name: "Traslado Constitución" },
   { date: "2026-12-08", name: "Inmaculada Concepción" },
   { date: "2026-12-25", name: "Navidad" },
@@ -104,36 +104,31 @@ export default function AgendaPage() {
   const [clients, setClients] = useState<Client[]>([]);
   const [services, setServices] = useState<Service[]>([]);
 
+  // Crear
+  const [createSlot, setCreateSlot] = useState<null | { start: Date; end: Date }>(null);
+  const [createClientId, setCreateClientId] = useState<string>("__new__");
+  const [createClientName, setCreateClientName] = useState("");
+  const [createServiceId, setCreateServiceId] = useState<string>("__new__");
+  const [createServiceName, setCreateServiceName] = useState("");
+  const [createPrice, setCreatePrice] = useState("");
+  const [createNotes, setCreateNotes] = useState("");
+  const [createErr, setCreateErr] = useState<string | null>(null);
+
+  // Editar
   const [editEvent, setEditEvent] = useState<EventT | null>(null);
   const [editStart, setEditStart] = useState("");
   const [editEnd, setEditEnd] = useState("");
   const [editPrice, setEditPrice] = useState("");
   const [editNotes, setEditNotes] = useState("");
+  const [editStatus, setEditStatus] = useState<Row["status"]>("reserved");
+  const [editPaid, setEditPaid] = useState(false);
+  const [editPaymentMethod, setEditPaymentMethod] = useState<Row["payment_method"]>(null);
+  const [saving, setSaving] = useState(false);
 
   /* ─────────────────────────────
-     Estilos de eventos
+     Festivos como eventos (todo el día)
   ───────────────────────────── */
-  const eventStyleGetter = useMemo(
-    () => (event: any) => {
-      if (event?.isHoliday) {
-        return { className: "is-holiday-event text-white rounded-md" };
-      }
-
-      let bg = "bg-gray-900";
-      if (event.raw?.status === "done") bg = "bg-green-700";
-      if (event.raw?.status === "cancelled") bg = "bg-gray-500";
-      if (event.raw?.status === "no_show") bg = "bg-red-700";
-      if (event.raw?.paid) bg = "bg-blue-700";
-
-      return { className: `${bg} text-white rounded-md` };
-    },
-    []
-  );
-
-  /* ─────────────────────────────
-     Festivos como eventos
-  ───────────────────────────── */
-  const holidayEvents = useMemo(() => {
+  const holidayEvents: any[] = useMemo(() => {
     return HOLIDAYS_2026.map((h) => {
       const start = new Date(`${h.date}T00:00:00`);
       const end = new Date(start);
@@ -151,42 +146,205 @@ export default function AgendaPage() {
   }, []);
 
   /* ─────────────────────────────
-     Cargar datos
+     Estilos de eventos (citas + festivos)
   ───────────────────────────── */
+  const eventStyleGetter = useMemo(
+    () => (event: any) => {
+      if (event?.isHoliday) {
+        return { className: "is-holiday-event text-white rounded-md" };
+      }
+
+      const s = event?.raw?.status;
+      const paid = event?.raw?.paid;
+
+      let bg = "bg-gray-900";
+      if (s === "done") bg = "bg-green-700";
+      if (s === "cancelled") bg = "bg-gray-500";
+      if (s === "no_show") bg = "bg-red-700";
+      if (paid) bg = "bg-blue-700";
+
+      return { className: `${bg} text-white rounded-md` };
+    },
+    []
+  );
+
+  async function guardAuth() {
+    const { data } = await supabase.auth.getSession();
+    if (!data.session) window.location.href = "/login";
+  }
+
+  async function loadLists() {
+    const [cRes, sRes] = await Promise.all([
+      supabase.from("clients").select("id, full_name, phone").order("full_name", { ascending: true }),
+      supabase.from("services").select("id, name, default_duration_min, default_price").order("name", { ascending: true }),
+    ]);
+    if (cRes.error) console.error(cRes.error);
+    if (sRes.error) console.error(sRes.error);
+    setClients((cRes.data ?? []) as Client[]);
+    setServices((sRes.data ?? []) as Service[]);
+  }
+
+  async function loadAppointments() {
+    const { data, error } = await supabase
+      .from("appointments")
+      .select(
+        `id, start_time, end_time, client_id, service_id, price, notes, status, paid, payment_method,
+         clients(full_name),
+         services(name)`
+      )
+      .order("start_time", { ascending: true });
+
+    if (error) console.error(error);
+
+    const rows = (data ?? []) as unknown as Row[];
+
+    setEvents(
+      rows.map((r) => ({
+        id: r.id,
+        title: `${r.clients?.full_name ?? "Cliente"} · ${r.services?.name ?? "Servicio"}`,
+        start: new Date(r.start_time),
+        end: new Date(r.end_time),
+        raw: r,
+      }))
+    );
+  }
+
   useEffect(() => {
     (async () => {
-      const { data } = await supabase.auth.getSession();
-      if (!data.session) window.location.href = "/login";
-
-      const c = await supabase.from("clients").select("id, full_name, phone");
-      const s = await supabase.from("services").select("id, name, default_duration_min, default_price");
-
-      setClients((c.data ?? []) as Client[]);
-      setServices((s.data ?? []) as Service[]);
-
-      const { data: a } = await supabase
-        .from("appointments")
-        .select(`id, start_time, end_time, price, notes, status, paid, payment_method, clients(full_name), services(name)`);
-
-      setEvents(
-        ((a ?? []) as Row[]).map((r) => ({
-          id: r.id,
-          title: `${r.clients?.full_name ?? "Cliente"} · ${r.services?.name ?? "Servicio"}`,
-          start: new Date(r.start_time),
-          end: new Date(r.end_time),
-          raw: r,
-        }))
-      );
-
+      await guardAuth();
+      await loadLists();
+      await loadAppointments();
       setLoading(false);
     })();
   }, []);
+
+  async function getOrCreateClientId(): Promise<string> {
+    if (createClientId !== "__new__") return createClientId;
+    const name = createClientName.trim();
+    if (!name) throw new Error("Indica el nombre del cliente.");
+    const { data, error } = await supabase.from("clients").insert({ full_name: name }).select("id").single();
+    if (error) throw new Error(error.message);
+    return data.id as string;
+  }
+
+  async function getOrCreateServiceId(): Promise<string> {
+    if (createServiceId !== "__new__") return createServiceId;
+    const name = createServiceName.trim();
+    if (!name) throw new Error("Indica el nombre del servicio.");
+    const { data, error } = await supabase
+      .from("services")
+      .insert({ name, default_duration_min: 30, default_price: 0 })
+      .select("id")
+      .single();
+    if (error) throw new Error(error.message);
+    return data.id as string;
+  }
+
+  async function createAppointment() {
+    if (!createSlot) return;
+    setCreateErr(null);
+    setSaving(true);
+    try {
+      const clientId = await getOrCreateClientId();
+      const serviceId = await getOrCreateServiceId();
+      const p = createPrice.trim() ? Number(createPrice.replace(",", ".")) : null;
+      if (p !== null && Number.isNaN(p)) throw new Error("Precio inválido.");
+
+      const { error } = await supabase.from("appointments").insert({
+        start_time: createSlot.start.toISOString(),
+        end_time: createSlot.end.toISOString(),
+        client_id: clientId,
+        service_id: serviceId,
+        price: p,
+        notes: createNotes.trim() ? createNotes.trim() : null,
+        status: "reserved",
+        paid: false,
+        payment_method: null,
+      });
+      if (error) throw new Error(error.message);
+
+      setCreateSlot(null);
+      setCreateClientId("__new__");
+      setCreateClientName("");
+      setCreateServiceId("__new__");
+      setCreateServiceName("");
+      setCreatePrice("");
+      setCreateNotes("");
+
+      await loadLists();
+      await loadAppointments();
+    } catch (e: any) {
+      setCreateErr(e?.message ?? "Error al crear la cita.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function saveEdit() {
+    if (!editEvent) return;
+    setSaving(true);
+    try {
+      const p = editPrice.trim() ? Number(editPrice.replace(",", ".")) : null;
+      if (p !== null && Number.isNaN(p)) throw new Error("Precio inválido.");
+
+      const start = new Date(editStart);
+      const end = new Date(editEnd);
+      if (!(start instanceof Date) || Number.isNaN(start.getTime())) throw new Error("Hora inicio inválida.");
+      if (!(end instanceof Date) || Number.isNaN(end.getTime())) throw new Error("Hora fin inválida.");
+      if (end <= start) throw new Error("La hora fin debe ser posterior a inicio.");
+
+      const { error } = await supabase
+        .from("appointments")
+        .update({
+          start_time: start.toISOString(),
+          end_time: end.toISOString(),
+          price: p,
+          notes: editNotes.trim() ? editNotes.trim() : null,
+          status: editStatus,
+          paid: editPaid,
+          payment_method: editPaid ? editPaymentMethod : null,
+        })
+        .eq("id", editEvent.id);
+
+      if (error) throw new Error(error.message);
+
+      setEditEvent(null);
+      await loadAppointments();
+    } catch (e: any) {
+      alert(e?.message ?? "Error al guardar.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function deleteAppointment() {
+    if (!editEvent) return;
+    const ok = confirm("¿Eliminar cita? (No se puede deshacer)");
+    if (!ok) return;
+    setSaving(true);
+    const { error } = await supabase.from("appointments").delete().eq("id", editEvent.id);
+    if (error) alert(error.message);
+    setEditEvent(null);
+    await loadAppointments();
+    setSaving(false);
+  }
 
   if (loading) return <div className="p-4">Cargando…</div>;
 
   return (
     <main className="space-y-3">
-      <h1 className="text-xl font-semibold">Agenda</h1>
+      <div className="flex items-center gap-2">
+        <h1 className="text-xl font-semibold">Agenda (por horas)</h1>
+        <button
+          className="ml-auto border rounded-md px-3 py-1 bg-white"
+          onClick={async () => {
+            await supabase.auth.signOut();
+            window.location.href = "/login";
+          }}
+        >
+          Salir
+        </button>
+      </div>
 
       <div className="border rounded-xl p-2 bg-white">
         <Calendar
@@ -197,28 +355,238 @@ export default function AgendaPage() {
           defaultView={Views.WEEK}
           views={[Views.DAY, Views.WEEK, Views.MONTH]}
           popup
-          selectable
           step={15}
           timeslots={4}
-          style={{ height: "78vh" }}
-          eventPropGetter={eventStyleGetter}
-          dayPropGetter={(date) => {
-            const d = isoDate(date);
-            if (HOLIDAY_SET.has(d)) return { className: "is-holiday" };
-            if (date.getDay() === 0) return { className: "is-sunday" };
-            return {};
+          selectable
+          onSelectSlot={(slot) => {
+            setCreateSlot({ start: slot.start as Date, end: slot.end as Date });
+            setCreateErr(null);
           }}
           onSelectEvent={(ev: any) => {
-            if (ev?.isHoliday) return;
+            if (ev?.isHoliday) return; // no editar festivos
+
             const e = ev as EventT;
             setEditEvent(e);
             setEditStart(toLocalInputValue(e.start));
             setEditEnd(toLocalInputValue(e.end));
             setEditPrice(e.raw.price?.toString() ?? "");
             setEditNotes(e.raw.notes ?? "");
+            setEditStatus(e.raw.status);
+            setEditPaid(!!e.raw.paid);
+            setEditPaymentMethod(e.raw.payment_method ?? null);
           }}
+          min={new Date(1970, 1, 1, 9, 0)}
+          max={new Date(1970, 1, 1, 20, 0)}
+          eventPropGetter={(event) => eventStyleGetter(event)}
+          dayPropGetter={(date) => {
+            const d = isoDate(date);
+            if (HOLIDAY_SET.has(d)) return { className: "is-holiday" };
+            if (date.getDay() === 0) return { className: "is-sunday" };
+            return {};
+          }}
+          style={{ height: "78vh" }}
         />
       </div>
+
+      {/* Modal CREAR */}
+      {createSlot && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center p-4">
+          <div className="bg-white w-full max-w-lg rounded-xl p-4 space-y-3">
+            <h2 className="font-semibold">Nueva cita</h2>
+            <p className="text-sm text-zinc-600">
+              {format(createSlot.start, "EEE dd/MM HH:mm", { locale: es })} →{" "}
+              {format(createSlot.end, "HH:mm", { locale: es })}
+            </p>
+
+            <div className="grid grid-cols-1 gap-3">
+              <div>
+                <label className="text-sm font-medium">Cliente</label>
+                <select
+                  className="w-full border rounded-md p-2 bg-white"
+                  value={createClientId}
+                  onChange={(e) => setCreateClientId(e.target.value)}
+                >
+                  <option value="__new__">+ Nuevo cliente…</option>
+                  {clients.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.full_name}
+                    </option>
+                  ))}
+                </select>
+                {createClientId === "__new__" && (
+                  <input
+                    className="mt-2 w-full border rounded-md p-2"
+                    placeholder="Nombre del cliente"
+                    value={createClientName}
+                    onChange={(e) => setCreateClientName(e.target.value)}
+                  />
+                )}
+              </div>
+
+              <div>
+                <label className="text-sm font-medium">Servicio</label>
+                <select
+                  className="w-full border rounded-md p-2 bg-white"
+                  value={createServiceId}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    setCreateServiceId(v);
+                    const s = services.find((x) => x.id === v);
+                    if (s) setCreatePrice(String(s.default_price ?? ""));
+                  }}
+                >
+                  <option value="__new__">+ Nuevo servicio…</option>
+                  {services.map((s) => (
+                    <option key={s.id} value={s.id}>
+                      {s.name}
+                    </option>
+                  ))}
+                </select>
+                {createServiceId === "__new__" && (
+                  <input
+                    className="mt-2 w-full border rounded-md p-2"
+                    placeholder="Nombre del servicio"
+                    value={createServiceName}
+                    onChange={(e) => setCreateServiceName(e.target.value)}
+                  />
+                )}
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-sm font-medium">Precio</label>
+                  <input
+                    className="w-full border rounded-md p-2"
+                    placeholder="(opcional)"
+                    value={createPrice}
+                    onChange={(e) => setCreatePrice(e.target.value)}
+                  />
+                </div>
+                <div className="text-sm text-zinc-500 flex items-end">
+                  (Puedes arrastrar para elegir duración)
+                </div>
+              </div>
+
+              <div>
+                <label className="text-sm font-medium">Notas</label>
+                <textarea
+                  className="w-full border rounded-md p-2"
+                  rows={3}
+                  value={createNotes}
+                  onChange={(e) => setCreateNotes(e.target.value)}
+                />
+              </div>
+            </div>
+
+            {createErr && <p className="text-sm text-red-600">{createErr}</p>}
+
+            <div className="flex gap-2">
+              <button className="flex-1 border rounded-md p-2" disabled={saving} onClick={() => setCreateSlot(null)}>
+                Cancelar
+              </button>
+              <button className="flex-1 bg-black text-white rounded-md p-2" disabled={saving} onClick={createAppointment}>
+                {saving ? "Guardando..." : "Guardar"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal EDITAR */}
+      {editEvent && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center p-4">
+          <div className="bg-white w-full max-w-lg rounded-xl p-4 space-y-3">
+            <h2 className="font-semibold">Editar cita</h2>
+
+            <div className="text-sm text-zinc-600">
+              <div>
+                <span className="font-medium">Cliente:</span> {editEvent.raw.clients?.full_name ?? "-"}
+              </div>
+              <div>
+                <span className="font-medium">Servicio:</span> {editEvent.raw.services?.name ?? "-"}
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="text-sm font-medium">Inicio</label>
+                <input
+                  className="w-full border rounded-md p-2"
+                  type="datetime-local"
+                  value={editStart}
+                  onChange={(e) => setEditStart(e.target.value)}
+                />
+              </div>
+              <div>
+                <label className="text-sm font-medium">Fin</label>
+                <input
+                  className="w-full border rounded-md p-2"
+                  type="datetime-local"
+                  value={editEnd}
+                  onChange={(e) => setEditEnd(e.target.value)}
+                />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="text-sm font-medium">Precio</label>
+                <input className="w-full border rounded-md p-2" value={editPrice} onChange={(e) => setEditPrice(e.target.value)} />
+              </div>
+              <div>
+                <label className="text-sm font-medium">Estado</label>
+                <select
+                  className="w-full border rounded-md p-2 bg-white"
+                  value={editStatus}
+                  onChange={(e) => setEditStatus(e.target.value as any)}
+                >
+                  <option value="reserved">Reservada</option>
+                  <option value="done">Realizada</option>
+                  <option value="cancelled">Cancelada</option>
+                  <option value="no_show">No show</option>
+                </select>
+              </div>
+            </div>
+
+            <div>
+              <label className="text-sm font-medium">Notas</label>
+              <textarea className="w-full border rounded-md p-2" rows={3} value={editNotes} onChange={(e) => setEditNotes(e.target.value)} />
+            </div>
+
+            <div className="border rounded-md p-3 bg-zinc-50 space-y-2">
+              <label className="flex items-center gap-2 text-sm">
+                <input type="checkbox" checked={editPaid} onChange={(e) => setEditPaid(e.target.checked)} />
+                Pagada
+              </label>
+
+              {editPaid && (
+                <select
+                  className="w-full border rounded-md p-2 bg-white"
+                  value={editPaymentMethod ?? ""}
+                  onChange={(e) => setEditPaymentMethod((e.target.value || null) as any)}
+                >
+                  <option value="">Selecciona método…</option>
+                  <option value="cash">Efectivo</option>
+                  <option value="card">Tarjeta</option>
+                  <option value="bizum">Bizum</option>
+                </select>
+              )}
+            </div>
+
+            <div className="flex gap-2">
+              <button className="flex-1 border rounded-md p-2" disabled={saving} onClick={() => setEditEvent(null)}>
+                Cerrar
+              </button>
+              <button className="flex-1 border rounded-md p-2" disabled={saving} onClick={deleteAppointment}>
+                Eliminar
+              </button>
+              <button className="flex-1 bg-black text-white rounded-md p-2" disabled={saving} onClick={saveEdit}>
+                {saving ? "Guardando..." : "Guardar"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </main>
   );
 }
