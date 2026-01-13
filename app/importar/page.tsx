@@ -10,14 +10,18 @@ function parseVCF(text: string): ParsedContact[] {
   const out: ParsedContact[] = [];
 
   for (const card of cards) {
-    const lines = card.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
-    if (!lines.some(l => l.startsWith("BEGIN:VCARD"))) continue;
+    const lines = card.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+    if (!lines.some((l) => l.startsWith("BEGIN:VCARD"))) continue;
 
-    const fn = (lines.find(l => l.startsWith("FN:")) || "").replace("FN:", "").trim();
+    const fn = (lines.find((l) => l.startsWith("FN:")) || "")
+      .replace("FN:", "")
+      .trim();
+
     const telLine =
-      lines.find(l => l.startsWith("TEL:")) ||
-      lines.find(l => l.startsWith("TEL;")) ||
+      lines.find((l) => l.startsWith("TEL:")) ||
+      lines.find((l) => l.startsWith("TEL;")) ||
       "";
+
     const phone = telLine ? telLine.split(":").slice(1).join(":").trim() : null;
 
     if (fn) out.push({ full_name: fn, phone: phone || null });
@@ -53,6 +57,7 @@ export default function ImportarPage() {
   async function onImport() {
     setLoading(true);
     setMsg("");
+
     try {
       const { data } = await supabase.auth.getSession();
       if (!data.session) {
@@ -65,10 +70,43 @@ export default function ImportarPage() {
         return;
       }
 
-      // Inserta en batches para evitar límites si son muchos
+      // 1) Normalizar teléfonos: quitar espacios
+      const normalized = all.map((c) => ({
+        ...c,
+        phone: c.phone ? c.phone.replace(/\s+/g, "") : null,
+      }));
+
+      // 2) Sacar teléfonos a comprobar
+      const phones = normalized.map((c) => c.phone).filter(Boolean) as string[];
+
+      // 3) Consultar cuáles ya existen (RLS lo limita a tu usuario)
+      const existingPhones = new Set<string>();
+
+      if (phones.length > 0) {
+        // Si hay muchísimos, evitamos query enorme
+        const chunkSize = 500;
+        for (let i = 0; i < phones.length; i += chunkSize) {
+          const chunk = phones.slice(i, i + chunkSize);
+          const { data: existing, error } = await supabase
+            .from("clients")
+            .select("phone")
+            .in("phone", chunk);
+
+          if (error) throw new Error(error.message);
+
+          existing?.forEach((e) => {
+            if (e.phone) existingPhones.add(e.phone);
+          });
+        }
+      }
+
+      // 4) Filtrar: solo nuevos (con teléfono). Los que no tengan teléfono se saltan.
+      const toInsert = normalized.filter((c) => c.phone && !existingPhones.has(c.phone));
+
+      // 5) Insertar en batches
       const batchSize = 200;
-      for (let i = 0; i < all.length; i += batchSize) {
-        const chunk = all.slice(i, i + batchSize).map(c => ({
+      for (let i = 0; i < toInsert.length; i += batchSize) {
+        const chunk = toInsert.slice(i, i + batchSize).map((c) => ({
           full_name: c.full_name,
           phone: c.phone,
           instagram: null,
@@ -80,7 +118,12 @@ export default function ImportarPage() {
         if (error) throw new Error(error.message);
       }
 
-      setMsg(`✅ Importados ${all.length} contactos en tu usuario.`);
+      const skipped = normalized.length - toInsert.length;
+      const skippedNoPhone = normalized.filter((c) => !c.phone).length;
+
+      setMsg(
+        `✅ Importados ${toInsert.length} · ⏭️ ${skipped} saltados (incluye ${skippedNoPhone} sin teléfono)`
+      );
     } catch (e: any) {
       setMsg(`❌ ${e?.message ?? "Error importando."}`);
     } finally {
@@ -95,6 +138,8 @@ export default function ImportarPage() {
       <div className="border rounded-xl bg-white p-4 space-y-3">
         <p className="text-sm text-zinc-600">
           Sube un archivo <b>.vcf</b> (vCard). Se importará solo en el usuario con el que has iniciado sesión.
+          <br />
+          Evita duplicados por <b>teléfono</b>.
         </p>
 
         <input type="file" accept=".vcf,text/vcard" onChange={(e) => onPick(e.target.files?.[0])} />
