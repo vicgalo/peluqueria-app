@@ -1,10 +1,11 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
-import { useParams, useRouter } from "next/navigation";
+import { format } from "date-fns";
+import { es } from "date-fns/locale";
 
-type ClientRow = {
+type Client = {
   id: string;
   full_name: string;
   phone: string | null;
@@ -12,183 +13,203 @@ type ClientRow = {
   notes: string | null;
 };
 
-export default function EditarClientePage() {
-  const params = useParams<{ id: string }>();
-  const router = useRouter();
-  const id = params.id;
+type AppointmentRow = {
+  id: string;
+  start_time: string;
+  end_time: string;
+  price: number | null;
+  paid: boolean;
+  payment_method: "cash" | "card" | "bizum" | null;
+  status: "reserved" | "done" | "cancelled" | "no_show";
+  notes: string | null;
+  services: { name: string } | null;
+};
+
+function pmLabel(pm: AppointmentRow["payment_method"]) {
+  if (pm === "cash") return "Efectivo";
+  if (pm === "card") return "Tarjeta";
+  if (pm === "bizum") return "Bizum";
+  return "-";
+}
+
+function statusLabel(s: AppointmentRow["status"]) {
+  if (s === "reserved") return "Reservada";
+  if (s === "done") return "Realizada";
+  if (s === "cancelled") return "Cancelada";
+  if (s === "no_show") return "No show";
+  return s;
+}
+
+export default function ClienteDetallePage(props: any) {
+  const clientId = props?.params?.id as string;
 
   const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
-  const [msg, setMsg] = useState("");
+  const [client, setClient] = useState<Client | null>(null);
+  const [apps, setApps] = useState<AppointmentRow[]>([]);
+  const [err, setErr] = useState<string>("");
 
-  const [fullName, setFullName] = useState("");
-  const [phone, setPhone] = useState("");
-  const [instagram, setInstagram] = useState("");
-  const [notes, setNotes] = useState("");
+  async function guardAuth() {
+    const { data } = await supabase.auth.getSession();
+    if (!data.session) window.location.href = "/login";
+  }
+
+  async function loadAll() {
+    setErr("");
+
+    const cRes = await supabase
+      .from("clients")
+      .select("id, full_name, phone, instagram, notes")
+      .eq("id", clientId)
+      .single();
+
+    if (cRes.error) throw new Error(cRes.error.message);
+    setClient(cRes.data as Client);
+
+    const aRes = await supabase
+      .from("appointments")
+      .select("id, start_time, end_time, price, paid, payment_method, status, notes, services(name)")
+      .eq("client_id", clientId)
+      .order("start_time", { ascending: false });
+
+    if (aRes.error) throw new Error(aRes.error.message);
+    setApps((aRes.data ?? []) as unknown as AppointmentRow[]);
+  }
 
   useEffect(() => {
     (async () => {
-      setMsg("");
-      const { data: sessionData } = await supabase.auth.getSession();
-      if (!sessionData.session) {
-        router.push("/login");
-        return;
-      }
-
-      const { data, error } = await supabase
-        .from("clients")
-        .select("id, full_name, phone, instagram, notes")
-        .eq("id", id)
-        .single();
-
-      if (error) {
-        setMsg("❌ No se pudo cargar el cliente (¿existe o es de otro usuario?).");
+      await guardAuth();
+      try {
+        await loadAll();
+      } catch (e: any) {
+        setErr(e?.message ?? "Error cargando cliente.");
+      } finally {
         setLoading(false);
-        return;
       }
-
-      const c = data as ClientRow;
-      setFullName(c.full_name ?? "");
-      setPhone(c.phone ?? "");
-      setInstagram(c.instagram ?? "");
-      setNotes(c.notes ?? "");
-      setLoading(false);
     })();
-  }, [id, router]);
+  }, []);
 
-  async function onSave(e: React.FormEvent) {
-    e.preventDefault();
-    setSaving(true);
-    setMsg("");
+  const totalGastado = useMemo(() => {
+    return apps.reduce((acc, a) => acc + (a.price ?? 0), 0);
+  }, [apps]);
 
-    try {
-      const normalizedPhone = phone.trim() ? phone.replace(/\s+/g, "") : null;
+  const totalPagado = useMemo(() => {
+    return apps.filter((a) => a.paid).reduce((acc, a) => acc + (a.price ?? 0), 0);
+  }, [apps]);
 
-      const { error } = await supabase
-        .from("clients")
-        .update({
-          full_name: fullName.trim(),
-          phone: normalizedPhone,
-          instagram: instagram.trim() || null,
-          notes: notes.trim() || null,
-        })
-        .eq("id", id);
+  if (loading) return <div className="p-4">Cargando…</div>;
 
-      if (error) throw new Error(error.message);
-
-      setMsg("✅ Cliente actualizado");
-      // opcional: volver a clientes
-      // router.push("/clientes");
-    } catch (err: any) {
-      setMsg(`❌ ${err?.message ?? "Error guardando"}`);
-    } finally {
-      setSaving(false);
-    }
+  if (err) {
+    return (
+      <main className="space-y-3">
+        <div className="flex items-center gap-2">
+          <button className="border rounded-md px-3 py-1 bg-white" onClick={() => (window.location.href = "/clientes")}>
+            ← Volver
+          </button>
+          <h1 className="text-xl font-semibold">Cliente</h1>
+        </div>
+        <div className="border rounded-xl bg-white p-4 text-red-700">{err}</div>
+      </main>
+    );
   }
 
-  async function onDelete() {
-    if (!confirm("¿Seguro que quieres eliminar este cliente?")) return;
-
-    setSaving(true);
-    setMsg("");
-
-    try {
-      const { error } = await supabase.from("clients").delete().eq("id", id);
-      if (error) throw new Error(error.message);
-
-      router.push("/clientes");
-    } catch (err: any) {
-      setMsg(`❌ ${err?.message ?? "Error eliminando"}`);
-    } finally {
-      setSaving(false);
-    }
+  if (!client) {
+    return (
+      <main className="space-y-3">
+        <div className="flex items-center gap-2">
+          <button className="border rounded-md px-3 py-1 bg-white" onClick={() => (window.location.href = "/clientes")}>
+            ← Volver
+          </button>
+          <h1 className="text-xl font-semibold">Cliente</h1>
+        </div>
+        <div className="border rounded-xl bg-white p-4">No encontrado.</div>
+      </main>
+    );
   }
-
-  if (loading) return <p>Cargando…</p>;
 
   return (
     <main className="space-y-4">
-      <div className="flex items-center gap-3">
-        <h1 className="text-xl font-semibold">Editar cliente</h1>
-        <button
-          className="ml-auto text-sm underline"
-          onClick={() => router.push("/clientes")}
-        >
-          Volver
+      <div className="flex items-center gap-2">
+        <button className="border rounded-md px-3 py-1 bg-white" onClick={() => (window.location.href = "/clientes")}>
+          ← Volver
         </button>
+        <h1 className="text-xl font-semibold">{client.full_name}</h1>
       </div>
 
-      <form onSubmit={onSave} className="space-y-3 border rounded-xl bg-white p-4">
-        <div>
-          <label className="block text-sm font-medium">Nombre</label>
-          <input
-            className="mt-1 w-full border rounded-md px-3 py-2"
-            value={fullName}
-            onChange={(e) => setFullName(e.target.value)}
-            required
-          />
+      <div className="border rounded-xl bg-white p-4 space-y-2">
+        <div className="text-sm text-zinc-700">
+          <div>
+            <span className="text-zinc-500">Teléfono:</span> <b>{client.phone ?? "-"}</b>
+          </div>
+          <div>
+            <span className="text-zinc-500">Instagram:</span> <b>{client.instagram ?? "-"}</b>
+          </div>
+          {client.notes && (
+            <div className="mt-2">
+              <span className="text-zinc-500">Notas:</span> <div className="text-zinc-700">{client.notes}</div>
+            </div>
+          )}
         </div>
 
-        <div>
-          <label className="block text-sm font-medium">Teléfono</label>
-          <input
-            className="mt-1 w-full border rounded-md px-3 py-2"
-            value={phone}
-            onChange={(e) => setPhone(e.target.value)}
-            placeholder="600123123"
-          />
+        <div className="border-t pt-3 grid grid-cols-1 md:grid-cols-3 gap-2 text-sm">
+          <div className="rounded-lg bg-zinc-50 p-3">
+            <div className="text-zinc-500">Citas</div>
+            <div className="text-lg font-semibold">{apps.length}</div>
+          </div>
+          <div className="rounded-lg bg-zinc-50 p-3">
+            <div className="text-zinc-500">Total (precio)</div>
+            <div className="text-lg font-semibold">{totalGastado.toFixed(2)} €</div>
+          </div>
+          <div className="rounded-lg bg-zinc-50 p-3">
+            <div className="text-zinc-500">Total pagado</div>
+            <div className="text-lg font-semibold">{totalPagado.toFixed(2)} €</div>
+          </div>
         </div>
+      </div>
 
-        <div>
-          <label className="block text-sm font-medium">Instagram</label>
-          <input
-            className="mt-1 w-full border rounded-md px-3 py-2"
-            value={instagram}
-            onChange={(e) => setInstagram(e.target.value)}
-            placeholder="@peluqueria..."
-          />
-        </div>
+      <div className="border rounded-xl bg-white overflow-hidden">
+        <div className="p-3 text-sm text-zinc-500">Historial de citas</div>
+        {apps.length === 0 ? (
+          <div className="p-4 text-sm text-zinc-600">Este cliente aún no tiene citas.</div>
+        ) : (
+          <div className="divide-y">
+            {apps.map((a) => {
+              const start = new Date(a.start_time);
+              const end = new Date(a.end_time);
+              return (
+                <div key={a.id} className="p-3">
+                  <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                    <div className="font-medium">
+                      {format(start, "EEE dd/MM/yyyy", { locale: es })} · {format(start, "HH:mm")}–{format(end, "HH:mm")}
+                    </div>
+                    <div className="text-sm text-zinc-600">
+                      · {a.services?.name ?? "Servicio"}
+                    </div>
+                  </div>
 
-        <div>
-          <label className="block text-sm font-medium">Notas</label>
-          <textarea
-            className="mt-1 w-full border rounded-md px-3 py-2"
-            value={notes}
-            onChange={(e) => setNotes(e.target.value)}
-            rows={4}
-          />
-        </div>
+                  <div className="mt-1 text-sm text-zinc-700 flex flex-wrap gap-x-4 gap-y-1">
+                    <div>
+                      <span className="text-zinc-500">Precio:</span> <b>{(a.price ?? 0).toFixed(2)} €</b>
+                    </div>
+                    <div>
+                      <span className="text-zinc-500">Pagada:</span>{" "}
+                      <b>{a.paid ? "Sí" : "No"}</b>
+                    </div>
+                    <div>
+                      <span className="text-zinc-500">Método:</span>{" "}
+                      <b>{a.paid ? pmLabel(a.payment_method) : "-"}</b>
+                    </div>
+                    <div>
+                      <span className="text-zinc-500">Estado:</span> <b>{statusLabel(a.status)}</b>
+                    </div>
+                  </div>
 
-        <div className="flex gap-2">
-          <button
-            type="submit"
-            className="bg-black text-white rounded-md px-3 py-2"
-            disabled={saving}
-          >
-            {saving ? "Guardando..." : "Guardar cambios"}
-          </button>
-
-          <button
-            type="button"
-            className="border rounded-md px-3 py-2"
-            onClick={() => router.push("/clientes")}
-            disabled={saving}
-          >
-            Cancelar
-          </button>
-
-          <button
-            type="button"
-            className="ml-auto border rounded-md px-3 py-2 text-red-600"
-            onClick={onDelete}
-            disabled={saving}
-          >
-            Eliminar
-          </button>
-        </div>
-
-        {msg && <p className="text-sm">{msg}</p>}
-      </form>
+                  {a.notes && <div className="mt-2 text-sm text-zinc-600">{a.notes}</div>}
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
     </main>
   );
 }

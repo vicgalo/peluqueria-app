@@ -15,7 +15,6 @@ type Client = {
 function normalizePhoneES(input: string): string | null {
   const digits = (input || "").replace(/\D/g, "");
   if (!digits) return null;
-  // Si son 9 dígitos, asumimos ES y prefijamos 34
   if (digits.length === 9) return `34${digits}`;
   return digits;
 }
@@ -85,7 +84,6 @@ export default function ClientesPage() {
     const phoneValue = phone.trim() || "";
     const phoneNorm = phoneValue ? normalizePhoneES(phoneValue) : null;
 
-    // Aviso duplicado (app)
     if (phoneNorm) {
       const dup = await checkDuplicatePhone(phoneNorm, null);
       if (dup) {
@@ -99,7 +97,7 @@ export default function ClientesPage() {
       phone: phoneValue.trim() || null,
       instagram: instagram.trim() || null,
       notes: notes.trim() || null,
-      phone_norm: phoneNorm, // trigger también lo pone, pero lo dejamos
+      phone_norm: phoneNorm,
     });
 
     if (error) {
@@ -142,7 +140,6 @@ export default function ClientesPage() {
     const phoneValue = ePhone.trim() || "";
     const phoneNorm = phoneValue ? normalizePhoneES(phoneValue) : null;
 
-    // Aviso duplicado (app) excluyendo el mismo cliente
     if (phoneNorm) {
       const dup = await checkDuplicatePhone(phoneNorm, editId);
       if (dup) {
@@ -195,30 +192,10 @@ export default function ClientesPage() {
 
       <div className="border rounded-xl bg-white p-4 space-y-3">
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-          <input
-            className="border rounded-md p-2"
-            placeholder="Nombre y apellidos"
-            value={fullName}
-            onChange={(e) => setFullName(e.target.value)}
-          />
-          <input
-            className="border rounded-md p-2"
-            placeholder="Teléfono (opcional)"
-            value={phone}
-            onChange={(e) => setPhone(e.target.value)}
-          />
-          <input
-            className="border rounded-md p-2"
-            placeholder="Instagram (opcional)"
-            value={instagram}
-            onChange={(e) => setInstagram(e.target.value)}
-          />
-          <input
-            className="border rounded-md p-2"
-            placeholder="Notas (opcional)"
-            value={notes}
-            onChange={(e) => setNotes(e.target.value)}
-          />
+          <input className="border rounded-md p-2" placeholder="Nombre y apellidos" value={fullName} onChange={(e) => setFullName(e.target.value)} />
+          <input className="border rounded-md p-2" placeholder="Teléfono (opcional)" value={phone} onChange={(e) => setPhone(e.target.value)} />
+          <input className="border rounded-md p-2" placeholder="Instagram (opcional)" value={instagram} onChange={(e) => setInstagram(e.target.value)} />
+          <input className="border rounded-md p-2" placeholder="Notas (opcional)" value={notes} onChange={(e) => setNotes(e.target.value)} />
         </div>
 
         <button className="bg-black text-white rounded-md px-3 py-2" onClick={addClient}>
@@ -226,16 +203,22 @@ export default function ClientesPage() {
         </button>
 
         {msg && <div className="text-sm text-zinc-700">{msg}</div>}
-        <div className="text-xs text-zinc-500">
-          Detecta duplicados aunque escribas el teléfono con espacios o guiones. Si pones 9 dígitos, asume España (+34).
-        </div>
       </div>
 
       <div className="border rounded-xl bg-white overflow-hidden">
         <div className="p-3 text-sm text-zinc-500">{count} clientes</div>
         <div className="divide-y">
           {items.map((c) => (
-            <div key={c.id} className="p-3 flex items-start gap-3">
+            <div
+              key={c.id}
+              className="p-3 flex items-start gap-3 hover:bg-zinc-50 cursor-pointer"
+              onClick={() => (window.location.href = `/clientes/${c.id}`)}
+              role="button"
+              tabIndex={0}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") window.location.href = `/clientes/${c.id}`;
+              }}
+            >
               <div className="flex-1">
                 <div className="font-medium">{c.full_name}</div>
                 <div className="text-sm text-zinc-600">
@@ -244,12 +227,26 @@ export default function ClientesPage() {
                 {c.notes && <div className="text-sm text-zinc-500 mt-1">{c.notes}</div>}
               </div>
 
-              <button className="border rounded-md px-3 py-1" onClick={() => openEdit(c)}>
-                Editar
-              </button>
-              <button className="border rounded-md px-3 py-1" onClick={() => delClient(c.id)}>
-                Eliminar
-              </button>
+              <div className="flex gap-2">
+                <button
+                  className="border rounded-md px-3 py-1"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    openEdit(c);
+                  }}
+                >
+                  Editar
+                </button>
+                <button
+                  className="border rounded-md px-3 py-1"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    delClient(c.id);
+                  }}
+                >
+                  Eliminar
+                </button>
+              </div>
             </div>
           ))}
         </div>
