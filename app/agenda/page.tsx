@@ -101,26 +101,24 @@ function toLocalInputValue(d: Date) {
 /* ─────────────────────────────
    Helpers selector móvil
 ───────────────────────────── */
-function hhmm(d: Date) {
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return `${pad(d.getHours())}:${pad(d.getMinutes())}`;
-}
-
 function buildTimeOptions(startHour = 9, endHour = 20, stepMin = 15) {
   const out: string[] = [];
   for (let h = startHour; h <= endHour; h++) {
     for (let m = 0; m < 60; m += stepMin) {
       if (h === endHour && m > 0) break; // no pasar de 20:00 exacto
-      const hh = String(h).padStart(2, "0");
-      const mm = String(m).padStart(2, "0");
-      out.push(`${hh}:${mm}`);
+      out.push(`${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`);
     }
   }
   return out;
 }
-
 const TIME_OPTIONS = buildTimeOptions(9, 20, 15);
 const DURATION_OPTIONS = [15, 30, 45, 60, 75, 90, 105, 120];
+
+function startOfDayOnly(d: Date) {
+  const x = new Date(d);
+  x.setHours(0, 0, 0, 0);
+  return x;
+}
 
 export default function AgendaPage() {
   const [loading, setLoading] = useState(true);
@@ -128,7 +126,7 @@ export default function AgendaPage() {
   const [clients, setClients] = useState<Client[]>([]);
   const [services, setServices] = useState<Service[]>([]);
 
-  // Crear (modal)
+  // Crear (modal principal)
   const [createSlot, setCreateSlot] = useState<null | { start: Date; end: Date }>(null);
   const [createClientId, setCreateClientId] = useState<string>("__new__");
   const [createClientName, setCreateClientName] = useState("");
@@ -270,6 +268,14 @@ export default function AgendaPage() {
     return data.id as string;
   }
 
+  function openMobilePickerForDate(date: Date) {
+    const d0 = startOfDayOnly(date);
+    setMobileDay(d0);
+    setMobileStartHHMM("09:00");
+    setMobileDuration(30);
+    setMobilePickOpen(true);
+  }
+
   function openCreateFromDayAndTime(day: Date, hhmmStr: string, durationMin: number) {
     const [hh, mm] = hhmmStr.split(":").map((x) => Number(x));
     const start = new Date(day);
@@ -368,6 +374,16 @@ export default function AgendaPage() {
     setSaving(false);
   }
 
+  // Fin calculado del selector móvil (sin mutar estado)
+  const mobileEndLabel = useMemo(() => {
+    if (!mobileDay) return "";
+    const [hh, mm] = mobileStartHHMM.split(":").map(Number);
+    const start = new Date(mobileDay);
+    start.setHours(hh, mm, 0, 0);
+    const end = addMinutes(start, mobileDuration);
+    return format(end, "HH:mm");
+  }, [mobileDay, mobileStartHHMM, mobileDuration]);
+
   if (loading) return <div className="p-4">Cargando…</div>;
 
   return (
@@ -385,20 +401,15 @@ export default function AgendaPage() {
         </button>
       </div>
 
-      {/* Botón extra en móvil: elegir día + hora */}
+      {/* Botón extra en móvil */}
       {isMobile && (
         <div className="border rounded-xl bg-white p-3 flex items-center gap-2">
           <div className="text-sm text-zinc-600">
-            En móvil: toca un día del calendario o usa “Nueva cita”.
+            En móvil: toca un día/casilla o usa “Nueva cita”.
           </div>
           <button
             className="ml-auto bg-black text-white rounded-md px-3 py-2"
-            onClick={() => {
-              setMobileDay(new Date());
-              setMobileStartHHMM("09:00");
-              setMobileDuration(30);
-              setMobilePickOpen(true);
-            }}
+            onClick={() => openMobilePickerForDate(new Date())}
           >
             Nueva cita
           </button>
@@ -416,11 +427,21 @@ export default function AgendaPage() {
           popup
           step={15}
           timeslots={4}
-          selectable={!isMobile} // 👈 en móvil evitamos seleccionar slots pequeños
+          selectable
+          longPressThreshold={10} /* 👈 clave: en iPhone “tap” funciona mejor */
           onSelectSlot={(slot) => {
-            if (isMobile) return;
+            // ✅ En móvil: tocando cualquier casilla/slot abrimos el selector (también en vista Mes)
+            if (isMobile) {
+              openMobilePickerForDate(slot.start as Date);
+              return;
+            }
+            // Desktop: comportamiento normal
             setCreateSlot({ start: slot.start as Date, end: slot.end as Date });
             setCreateErr(null);
+          }}
+          onDrillDown={(date) => {
+            // Fallback adicional por si el tap cae aquí
+            if (isMobile) openMobilePickerForDate(date as Date);
           }}
           onSelectEvent={(ev: any) => {
             if (ev?.isHoliday) return;
@@ -435,17 +456,6 @@ export default function AgendaPage() {
             setEditPaid(!!e.raw.paid);
             setEditPaymentMethod(e.raw.payment_method ?? null);
           }}
-          onNavigate={(date) => {
-            // nada
-          }}
-          onDrillDown={(date) => {
-            // En móvil, tocar un día abre selector día+hora
-            if (!isMobile) return;
-            setMobileDay(date as Date);
-            setMobileStartHHMM("09:00");
-            setMobileDuration(30);
-            setMobilePickOpen(true);
-          }}
           min={new Date(1970, 1, 1, 9, 0)}
           max={new Date(1970, 1, 1, 20, 0)}
           eventPropGetter={(event) => eventStyleGetter(event)}
@@ -459,13 +469,13 @@ export default function AgendaPage() {
         />
       </div>
 
-      {/* Modal selector móvil: día + hora */}
+      {/* Modal selector móvil: día + hora (ahora opaco y legible) */}
       {mobilePickOpen && mobileDay && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center p-4">
-          <div className="bg-white w-full max-w-md rounded-xl p-4 space-y-3">
+        <div className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-4">
+          <div className="w-full max-w-md rounded-2xl shadow-2xl ring-1 ring-black/10 bg-white opacity-100 p-4 space-y-3">
             <h2 className="font-semibold">Nueva cita (móvil)</h2>
 
-            <div className="text-sm text-zinc-600">
+            <div className="text-sm text-zinc-700">
               Día: <b>{format(mobileDay, "EEEE dd/MM/yyyy", { locale: es })}</b>
             </div>
 
@@ -501,26 +511,18 @@ export default function AgendaPage() {
               </div>
             </div>
 
-            <div className="text-sm text-zinc-600">
-              Fin:{" "}
-              <b>
-                {hhmm(addMinutes(new Date(mobileDay.setHours(Number(mobileStartHHMM.split(":")[0]), Number(mobileStartHHMM.split(":")[1]), 0, 0)), mobileDuration))}
-              </b>
+            <div className="text-sm text-zinc-700">
+              Fin: <b>{mobileEndLabel}</b>
             </div>
 
-            <div className="flex gap-2">
-              <button
-                className="flex-1 border rounded-md p-2"
-                onClick={() => setMobilePickOpen(false)}
-              >
+            <div className="flex gap-2 pt-1">
+              <button className="flex-1 border rounded-md p-2" onClick={() => setMobilePickOpen(false)}>
                 Cancelar
               </button>
               <button
                 className="flex-1 bg-black text-white rounded-md p-2"
                 onClick={() => {
-                  // Re-creamos el día sin mutarlo
-                  const day = new Date(mobileDay);
-                  openCreateFromDayAndTime(day, mobileStartHHMM, mobileDuration);
+                  openCreateFromDayAndTime(new Date(mobileDay), mobileStartHHMM, mobileDuration);
                   setMobilePickOpen(false);
                 }}
               >
@@ -531,10 +533,10 @@ export default function AgendaPage() {
         </div>
       )}
 
-      {/* Modal CREAR (el tuyo) */}
+      {/* Modal CREAR (tu modal original) */}
       {createSlot && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center p-4">
-          <div className="bg-white w-full max-w-lg rounded-xl p-4 space-y-3">
+        <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4">
+          <div className="bg-white w-full max-w-lg rounded-xl p-4 space-y-3 shadow-2xl ring-1 ring-black/10">
             <h2 className="font-semibold">Nueva cita</h2>
             <p className="text-sm text-zinc-600">
               {format(createSlot.start, "EEE dd/MM HH:mm", { locale: es })} →{" "}
@@ -635,10 +637,10 @@ export default function AgendaPage() {
         </div>
       )}
 
-      {/* Modal EDITAR (el tuyo) */}
+      {/* Modal EDITAR (sin cambios, pero con overlay opaco) */}
       {editEvent && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center p-4">
-          <div className="bg-white w-full max-w-lg rounded-xl p-4 space-y-3">
+        <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4">
+          <div className="bg-white w-full max-w-lg rounded-xl p-4 space-y-3 shadow-2xl ring-1 ring-black/10">
             <h2 className="font-semibold">Editar cita</h2>
 
             <div className="text-sm text-zinc-600">
@@ -674,7 +676,11 @@ export default function AgendaPage() {
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className="text-sm font-medium">Precio</label>
-                <input className="w-full border rounded-md p-2" value={editPrice} onChange={(e) => setEditPrice(e.target.value)} />
+                <input
+                  className="w-full border rounded-md p-2"
+                  value={editPrice}
+                  onChange={(e) => setEditPrice(e.target.value)}
+                />
               </div>
               <div>
                 <label className="text-sm font-medium">Estado</label>
@@ -693,7 +699,12 @@ export default function AgendaPage() {
 
             <div>
               <label className="text-sm font-medium">Notas</label>
-              <textarea className="w-full border rounded-md p-2" rows={3} value={editNotes} onChange={(e) => setEditNotes(e.target.value)} />
+              <textarea
+                className="w-full border rounded-md p-2"
+                rows={3}
+                value={editNotes}
+                onChange={(e) => setEditNotes(e.target.value)}
+              />
             </div>
 
             <div className="border rounded-md p-3 bg-zinc-50 space-y-2">
