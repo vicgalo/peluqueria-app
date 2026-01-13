@@ -6,7 +6,7 @@ import "./agenda.css";
 import { Calendar, dateFnsLocalizer, Views } from "react-big-calendar";
 import { format, parse, startOfWeek, getDay, addMinutes } from "date-fns";
 import { es } from "date-fns/locale";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, cloneElement, isValidElement } from "react";
 import { supabase } from "@/lib/supabaseClient";
 
 /* ───────────── Localización ES ───────────── */
@@ -137,10 +137,11 @@ export default function AgendaPage() {
   const [clients, setClients] = useState<Client[]>([]);
   const [services, setServices] = useState<Service[]>([]);
 
+  // Vista actual (importante para el comportamiento móvil)
+  const [view, setView] = useState<any>(Views.WEEK);
+
   // Crear
-  const [createSlot, setCreateSlot] = useState<null | { start: Date; end: Date }>(
-    null
-  );
+  const [createSlot, setCreateSlot] = useState<null | { start: Date; end: Date }>(null);
   const [createClientId, setCreateClientId] = useState<string>("__new__");
   const [createClientName, setCreateClientName] = useState("");
   const [createServiceId, setCreateServiceId] = useState<string>("__new__");
@@ -231,9 +232,7 @@ export default function AgendaPage() {
     setEvents(
       rows.map((r) => ({
         id: r.id,
-        title: `${r.clients?.full_name ?? "Cliente"} · ${
-          r.services?.name ?? "Servicio"
-        }`,
+        title: `${r.clients?.full_name ?? "Cliente"} · ${r.services?.name ?? "Servicio"}`,
         start: new Date(r.start_time),
         end: new Date(r.end_time),
         raw: r,
@@ -387,10 +386,7 @@ export default function AgendaPage() {
 
     setSaving(true);
     try {
-      const { error } = await supabase
-        .from("appointments")
-        .delete()
-        .eq("id", editEvent.id);
+      const { error } = await supabase.from("appointments").delete().eq("id", editEvent.id);
       if (error) throw new Error(error.message);
 
       setEditEvent(null);
@@ -402,23 +398,17 @@ export default function AgendaPage() {
     }
   }
 
-  // Disponibilidad móvil (igual que tenías)
+  /* ───────────── Disponibilidad móvil (activo) ───────────── */
   const busyIntervals = useMemo(() => {
     if (!mobileDay) return [];
     const day = startOfDayOnly(mobileDay);
-
     const todays = events.filter((e) => sameDay(e.start, day));
+
     return todays.map((e) => {
       const activeMinFromService = e.raw.services?.active_duration_min ?? null;
-      const totalMin = Math.max(
-        1,
-        Math.round((e.end.getTime() - e.start.getTime()) / 60000)
-      );
+      const totalMin = Math.max(1, Math.round((e.end.getTime() - e.start.getTime()) / 60000));
       const activeMin = Math.min(activeMinFromService ?? totalMin, totalMin);
-      return {
-        start: new Date(e.start),
-        end: addMinutes(new Date(e.start), activeMin),
-      };
+      return { start: new Date(e.start), end: addMinutes(new Date(e.start), activeMin) };
     });
   }, [events, mobileDay]);
 
@@ -451,13 +441,9 @@ export default function AgendaPage() {
   }, [mobileDay, mobileDuration, mobileActive, busyIntervals]);
 
   useEffect(() => {
-    if (!mobilePickOpen) return;
-    if (!mobileDay) return;
+    if (!mobilePickOpen || !mobileDay) return;
     if (availableStartTimes.length === 0) return;
-
-    if (!availableStartTimes.includes(mobileStartHHMM)) {
-      setMobileStartHHMM(availableStartTimes[0]);
-    }
+    if (!availableStartTimes.includes(mobileStartHHMM)) setMobileStartHHMM(availableStartTimes[0]);
   }, [availableStartTimes, mobilePickOpen, mobileDay, mobileStartHHMM]);
 
   const mobileEndLabel = useMemo(() => {
@@ -466,8 +452,7 @@ export default function AgendaPage() {
     const { hh, mm } = parseHHMM(mobileStartHHMM);
     const start = new Date(day);
     start.setHours(hh, mm, 0, 0);
-    const end = addMinutes(start, mobileDuration);
-    return format(end, "HH:mm");
+    return format(addMinutes(start, mobileDuration), "HH:mm");
   }, [mobileDay, mobileStartHHMM, mobileDuration]);
 
   const mobileActiveLabel = useMemo(() => {
@@ -476,12 +461,53 @@ export default function AgendaPage() {
     const { hh, mm } = parseHHMM(mobileStartHHMM);
     const start = new Date(day);
     start.setHours(hh, mm, 0, 0);
-    const end = addMinutes(
-      start,
-      Math.max(1, Math.min(mobileActive, mobileDuration))
-    );
-    return format(end, "HH:mm");
+    return format(addMinutes(start, Math.max(1, Math.min(mobileActive, mobileDuration))), "HH:mm");
   }, [mobileDay, mobileStartHHMM, mobileDuration, mobileActive]);
+
+  /* ───────────── ✅ WRAPPERS: tocar huecos en móvil (SEMANA/MES) ───────────── */
+  function MobileTimeSlotWrapper({ children, value }: any) {
+    // En móvil, en SEMANA: tocar un hueco abre el selector del día.
+    // En DÍA: no hacemos nada (solo editar citas).
+    if (!isMobile || view !== Views.WEEK) return children;
+
+    const child = Array.isArray(children) ? children[0] : children;
+    if (!isValidElement(child)) return children;
+
+    const prevOnClick = (child.props as any).onClick;
+
+    return cloneElement(child as any, {
+      onClick: (e: any) => {
+        // Si el toque cae "dentro" de una cita, no abrir crear (deja que el evento maneje)
+        const t = e?.target as HTMLElement | null;
+        if (t && t.closest(".rbc-event")) return;
+
+        if (typeof prevOnClick === "function") prevOnClick(e);
+        openMobilePickerForDate(value as Date);
+      },
+      style: { ...(child.props as any).style, cursor: "pointer" },
+    });
+  }
+
+  function MobileDateCellWrapper({ children, value }: any) {
+    // En móvil, en MES: tocar un día abre el selector.
+    if (!isMobile || view !== Views.MONTH) return children;
+
+    const child = Array.isArray(children) ? children[0] : children;
+    if (!isValidElement(child)) return children;
+
+    const prevOnClick = (child.props as any).onClick;
+
+    return cloneElement(child as any, {
+      onClick: (e: any) => {
+        const t = e?.target as HTMLElement | null;
+        if (t && t.closest(".rbc-event")) return;
+
+        if (typeof prevOnClick === "function") prevOnClick(e);
+        openMobilePickerForDate(value as Date);
+      },
+      style: { ...(child.props as any).style, cursor: "pointer" },
+    });
+  }
 
   if (loading) return <div className="p-4">Cargando…</div>;
 
@@ -494,7 +520,7 @@ export default function AgendaPage() {
       {isMobile && (
         <div className="border rounded-xl bg-white p-3 flex items-center gap-2">
           <div className="text-sm text-zinc-600">
-            En iPhone: toca una cita para editarla. Para crear usa “Nueva cita”.
+            Móvil: toca una cita para editar. En Semana/Mes puedes tocar un día para crear.
           </div>
           <button
             className="ml-auto bg-black text-white rounded-md px-3 py-2"
@@ -521,25 +547,24 @@ export default function AgendaPage() {
             })),
             ...events,
           ]}
+          view={view}
+          onView={(v) => setView(v)}
           defaultView={Views.WEEK}
           views={[Views.DAY, Views.WEEK, Views.MONTH]}
           popup
           step={15}
           timeslots={4}
 
-          /* ✅ CLAVE: en móvil NO seleccionamos slots */
+          /* ✅ MÓVIL: no selectable para que tocar cita SIEMPRE abra editar */
           selectable={!isMobile}
 
-          /* Desktop: crear por arrastre / selección */
+          /* Desktop: crear por selección/arrastre */
           onSelectSlot={(slotInfo: any) => {
-            setCreateSlot({
-              start: slotInfo.start as Date,
-              end: slotInfo.end as Date,
-            });
+            setCreateSlot({ start: slotInfo.start as Date, end: slotInfo.end as Date });
             setCreateErr(null);
           }}
 
-          /* ✅ En móvil: tocar una CITA siempre abre Editar */
+          /* Editar al tocar cita */
           onSelectEvent={(ev: any) => {
             if (ev?.isHoliday) return;
             const e = ev as EventT;
@@ -553,9 +578,10 @@ export default function AgendaPage() {
             setEditPaymentMethod(e.raw.payment_method ?? null);
           }}
 
-          /* ✅ En vista Mes: tocar un día en móvil abre el selector */
-          onDrillDown={(date) => {
-            if (isMobile) openMobilePickerForDate(date as Date);
+          /* ✅ Componentes wrapper para permitir “tocar día” en móvil */
+          components={{
+            timeSlotWrapper: MobileTimeSlotWrapper,
+            dateCellWrapper: MobileDateCellWrapper,
           }}
 
           min={new Date(1970, 1, 1, 9, 0)}
@@ -593,9 +619,7 @@ export default function AgendaPage() {
                   const s = services.find((x) => x.id === v);
                   if (s) {
                     setMobileDuration(s.default_duration_min);
-                    setMobileActive(
-                      s.active_duration_min ?? s.default_duration_min
-                    );
+                    setMobileActive(s.active_duration_min ?? s.default_duration_min);
                   } else {
                     setMobileDuration(30);
                     setMobileActive(30);
@@ -605,8 +629,7 @@ export default function AgendaPage() {
                 <option value="">(Opcional) Sin servicio</option>
                 {services.map((s) => (
                   <option key={s.id} value={s.id}>
-                    {s.name} · total {s.default_duration_min} · activo{" "}
-                    {s.active_duration_min ?? s.default_duration_min}
+                    {s.name} · total {s.default_duration_min} · activo {s.active_duration_min ?? s.default_duration_min}
                   </option>
                 ))}
               </select>
@@ -668,9 +691,7 @@ export default function AgendaPage() {
                 </div>
                 <div>
                   Bloqueo activo hasta: <b>{mobileActiveLabel}</b>{" "}
-                  <span className="text-zinc-500">
-                    (puedes atender a otra persona después)
-                  </span>
+                  <span className="text-zinc-500">(puedes atender a otra persona después)</span>
                 </div>
                 <div>
                   Huecos: <b>{availableStartTimes.length}</b>
@@ -679,10 +700,7 @@ export default function AgendaPage() {
             )}
 
             <div className="flex gap-2 pt-1">
-              <button
-                className="flex-1 border rounded-md p-2"
-                onClick={() => setMobilePickOpen(false)}
-              >
+              <button className="flex-1 border rounded-md p-2" onClick={() => setMobilePickOpen(false)}>
                 Cancelar
               </button>
               <button
@@ -697,11 +715,7 @@ export default function AgendaPage() {
                     setCreateServiceId("__new__");
                   }
 
-                  openCreateFromDayAndTime(
-                    new Date(mobileDay),
-                    mobileStartHHMM,
-                    mobileDuration
-                  );
+                  openCreateFromDayAndTime(new Date(mobileDay), mobileStartHHMM, mobileDuration);
                   setMobilePickOpen(false);
                 }}
               >
@@ -722,7 +736,6 @@ export default function AgendaPage() {
               {format(createSlot.end, "HH:mm", { locale: es })}
             </p>
 
-            {/* (tu modal crear igual que ya tenías) */}
             <div className="grid grid-cols-1 gap-3">
               <div>
                 <label className="text-sm font-medium">Cliente</label>
@@ -806,18 +819,10 @@ export default function AgendaPage() {
             {createErr && <p className="text-sm text-red-600">{createErr}</p>}
 
             <div className="flex gap-2">
-              <button
-                className="flex-1 border rounded-md p-2"
-                disabled={saving}
-                onClick={() => setCreateSlot(null)}
-              >
+              <button className="flex-1 border rounded-md p-2" disabled={saving} onClick={() => setCreateSlot(null)}>
                 Cancelar
               </button>
-              <button
-                className="flex-1 bg-black text-white rounded-md p-2"
-                disabled={saving}
-                onClick={createAppointment}
-              >
+              <button className="flex-1 bg-black text-white rounded-md p-2" disabled={saving} onClick={createAppointment}>
                 {saving ? "Guardando..." : "Guardar"}
               </button>
             </div>
@@ -832,53 +837,29 @@ export default function AgendaPage() {
             <h2 className="font-semibold">Editar cita</h2>
 
             <div className="text-sm text-zinc-600">
-              <div>
-                <span className="font-medium">Cliente:</span>{" "}
-                {editEvent.raw.clients?.full_name ?? "-"}
-              </div>
-              <div>
-                <span className="font-medium">Servicio:</span>{" "}
-                {editEvent.raw.services?.name ?? "-"}
-              </div>
+              <div><span className="font-medium">Cliente:</span> {editEvent.raw.clients?.full_name ?? "-"}</div>
+              <div><span className="font-medium">Servicio:</span> {editEvent.raw.services?.name ?? "-"}</div>
             </div>
 
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className="text-sm font-medium">Inicio</label>
-                <input
-                  className="w-full border rounded-md p-2"
-                  type="datetime-local"
-                  value={editStart}
-                  onChange={(e) => setEditStart(e.target.value)}
-                />
+                <input className="w-full border rounded-md p-2" type="datetime-local" value={editStart} onChange={(e) => setEditStart(e.target.value)} />
               </div>
               <div>
                 <label className="text-sm font-medium">Fin</label>
-                <input
-                  className="w-full border rounded-md p-2"
-                  type="datetime-local"
-                  value={editEnd}
-                  onChange={(e) => setEditEnd(e.target.value)}
-                />
+                <input className="w-full border rounded-md p-2" type="datetime-local" value={editEnd} onChange={(e) => setEditEnd(e.target.value)} />
               </div>
             </div>
 
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className="text-sm font-medium">Precio</label>
-                <input
-                  className="w-full border rounded-md p-2"
-                  value={editPrice}
-                  onChange={(e) => setEditPrice(e.target.value)}
-                />
+                <input className="w-full border rounded-md p-2" value={editPrice} onChange={(e) => setEditPrice(e.target.value)} />
               </div>
               <div>
                 <label className="text-sm font-medium">Estado</label>
-                <select
-                  className="w-full border rounded-md p-2 bg-white"
-                  value={editStatus}
-                  onChange={(e) => setEditStatus(e.target.value as any)}
-                >
+                <select className="w-full border rounded-md p-2 bg-white" value={editStatus} onChange={(e) => setEditStatus(e.target.value as any)}>
                   <option value="reserved">Reservada</option>
                   <option value="done">Realizada</option>
                   <option value="cancelled">Cancelada</option>
@@ -889,21 +870,12 @@ export default function AgendaPage() {
 
             <div>
               <label className="text-sm font-medium">Notas</label>
-              <textarea
-                className="w-full border rounded-md p-2"
-                rows={3}
-                value={editNotes}
-                onChange={(e) => setEditNotes(e.target.value)}
-              />
+              <textarea className="w-full border rounded-md p-2" rows={3} value={editNotes} onChange={(e) => setEditNotes(e.target.value)} />
             </div>
 
             <div className="border rounded-md p-3 bg-zinc-50 space-y-2">
               <label className="flex items-center gap-2 text-sm">
-                <input
-                  type="checkbox"
-                  checked={editPaid}
-                  onChange={(e) => setEditPaid(e.target.checked)}
-                />
+                <input type="checkbox" checked={editPaid} onChange={(e) => setEditPaid(e.target.checked)} />
                 Pagada
               </label>
 
@@ -911,9 +883,7 @@ export default function AgendaPage() {
                 <select
                   className="w-full border rounded-md p-2 bg-white"
                   value={editPaymentMethod ?? ""}
-                  onChange={(e) =>
-                    setEditPaymentMethod((e.target.value || null) as any)
-                  }
+                  onChange={(e) => setEditPaymentMethod((e.target.value || null) as any)}
                 >
                   <option value="">Selecciona método…</option>
                   <option value="cash">Efectivo</option>
@@ -924,25 +894,13 @@ export default function AgendaPage() {
             </div>
 
             <div className="flex gap-2">
-              <button
-                className="flex-1 border rounded-md p-2"
-                disabled={saving}
-                onClick={() => setEditEvent(null)}
-              >
+              <button className="flex-1 border rounded-md p-2" disabled={saving} onClick={() => setEditEvent(null)}>
                 Cerrar
               </button>
-              <button
-                className="flex-1 border rounded-md p-2"
-                disabled={saving}
-                onClick={deleteAppointment}
-              >
+              <button className="flex-1 border rounded-md p-2" disabled={saving} onClick={deleteAppointment}>
                 Eliminar
               </button>
-              <button
-                className="flex-1 bg-black text-white rounded-md p-2"
-                disabled={saving}
-                onClick={saveEdit}
-              >
+              <button className="flex-1 bg-black text-white rounded-md p-2" disabled={saving} onClick={saveEdit}>
                 {saving ? "Guardando..." : "Guardar"}
               </button>
             </div>
