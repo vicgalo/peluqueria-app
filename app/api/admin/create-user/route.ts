@@ -1,51 +1,47 @@
 import { NextRequest, NextResponse } from "next/server";
+import { createClient } from "@supabase/supabase-js";
 import { supabaseAdmin } from "@/lib/supabase/admin";
-import { createServerClient } from "@supabase/ssr";
-import { cookies } from "next/headers";
 
-function supabaseServer() {
-  const cookieStore = cookies();
-  return createServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-    {
-      cookies: {
-        getAll() {
-          return cookieStore.getAll();
-        },
-        setAll(cookiesToSet) {
-          cookiesToSet.forEach(({ name, value, options }) =>
-            cookieStore.set(name, value, options)
-          );
-        },
-      },
-    }
-  );
-}
+const supabaseAnon = createClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL!,
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+  { auth: { persistSession: false } }
+);
 
 export async function POST(req: NextRequest) {
-  const supabase = supabaseServer();
-  const { data } = await supabase.auth.getUser();
+  // 1) comprobar que el usuario está logueado leyendo el token
+  const authHeader = req.headers.get("authorization");
+  const token = authHeader?.startsWith("Bearer ")
+    ? authHeader.slice("Bearer ".length)
+    : null;
 
-  if (!data.user) {
+  if (!token) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const { email, password } = await req.json();
+  const { data: userData, error: userErr } = await supabaseAnon.auth.getUser(token);
+  if (userErr || !userData.user) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
 
-  if (!email || password?.length < 6) {
+  // 2) leer body
+  const body = await req.json();
+  const email = String(body.email || "").trim().toLowerCase();
+  const password = String(body.password || "");
+
+  if (!email || password.length < 6) {
     return NextResponse.json(
-      { error: "Email y contraseña mínima de 6 caracteres" },
+      { error: "Email obligatorio y contraseña mínimo 6 caracteres" },
       { status: 400 }
     );
   }
 
-  const { data: created, error } =
-    await supabaseAdmin.auth.admin.createUser({
-      email,
-      password,
-      email_confirm: true,
-    });
+  // 3) crear usuario en Supabase Auth (Admin API)
+  const { data: created, error } = await supabaseAdmin.auth.admin.createUser({
+    email,
+    password,
+    email_confirm: true,
+  });
 
   if (error) {
     return NextResponse.json({ error: error.message }, { status: 400 });
