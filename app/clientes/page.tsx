@@ -24,15 +24,15 @@ export default function ClientesPage() {
   const [loading, setLoading] = useState(true);
   const [msg, setMsg] = useState<string>("");
 
-  // Form crear
+  // Crear
   const [fullName, setFullName] = useState("");
   const [phone, setPhone] = useState("");
   const [instagram, setInstagram] = useState("");
   const [notes, setNotes] = useState("");
 
-  // Editar (modal)
+  // Editar
   const [editOpen, setEditOpen] = useState(false);
-  const [editId, setEditId] = useState<string | null>(null);
+  const [editClient, setEditClient] = useState<Client | null>(null);
   const [eFullName, setEFullName] = useState("");
   const [ePhone, setEPhone] = useState("");
   const [eInstagram, setEInstagram] = useState("");
@@ -62,7 +62,7 @@ export default function ClientesPage() {
     })();
   }, []);
 
-  async function checkDuplicatePhone(phoneNorm: string, excludeId?: string | null) {
+  async function checkDuplicatePhone(phoneNorm: string, excludeId?: string) {
     let q = supabase
       .from("clients")
       .select("id, full_name, phone")
@@ -85,27 +85,27 @@ export default function ClientesPage() {
     const phoneNorm = phoneValue ? normalizePhoneES(phoneValue) : null;
 
     if (phoneNorm) {
-      const dup = await checkDuplicatePhone(phoneNorm, null);
+      const dup = await checkDuplicatePhone(phoneNorm);
       if (dup) {
-        setMsg(`⚠️ Este teléfono ya existe: ${dup.full_name} (${dup.phone ?? ""}).`);
+        setMsg(`⚠️ Este teléfono ya existe: ${dup.full_name} (${dup.phone ?? ""})`);
         return;
       }
     }
 
     const { error } = await supabase.from("clients").insert({
       full_name: name,
-      phone: phoneValue.trim() || null,
+      phone: phoneValue || null,
       instagram: instagram.trim() || null,
       notes: notes.trim() || null,
       phone_norm: phoneNorm,
     });
 
     if (error) {
-      if ((error as any)?.code === "23505") {
-        setMsg("⚠️ No se ha guardado: ya existe un cliente con ese teléfono.");
-      } else {
-        setMsg(`❌ Error: ${error.message}`);
-      }
+      setMsg(
+        (error as any)?.code === "23505"
+          ? "⚠️ Ya existe un cliente con ese teléfono."
+          : `❌ Error: ${error.message}`
+      );
       return;
     }
 
@@ -118,7 +118,7 @@ export default function ClientesPage() {
   }
 
   function openEdit(c: Client) {
-    setEditId(c.id);
+    setEditClient(c);
     setEFullName(c.full_name ?? "");
     setEPhone(c.phone ?? "");
     setEInstagram(c.instagram ?? "");
@@ -128,8 +128,8 @@ export default function ClientesPage() {
   }
 
   async function saveEdit() {
+    if (!editClient) return;
     setEMsg("");
-    if (!editId) return;
 
     const name = eFullName.trim();
     if (!name) {
@@ -141,9 +141,9 @@ export default function ClientesPage() {
     const phoneNorm = phoneValue ? normalizePhoneES(phoneValue) : null;
 
     if (phoneNorm) {
-      const dup = await checkDuplicatePhone(phoneNorm, editId);
+      const dup = await checkDuplicatePhone(phoneNorm, editClient.id);
       if (dup) {
-        setEMsg(`⚠️ Ese teléfono ya lo tiene: ${dup.full_name} (${dup.phone ?? ""}).`);
+        setEMsg(`⚠️ Ese teléfono ya lo tiene: ${dup.full_name} (${dup.phone ?? ""})`);
         return;
       }
     }
@@ -152,24 +152,24 @@ export default function ClientesPage() {
       .from("clients")
       .update({
         full_name: name,
-        phone: phoneValue.trim() || null,
+        phone: phoneValue || null,
         instagram: eInstagram.trim() || null,
         notes: eNotes.trim() || null,
         phone_norm: phoneNorm,
       })
-      .eq("id", editId);
+      .eq("id", editClient.id);
 
     if (error) {
-      if ((error as any)?.code === "23505") {
-        setEMsg("⚠️ No se ha guardado: ya existe otro cliente con ese teléfono.");
-      } else {
-        setEMsg(`❌ Error: ${error.message}`);
-      }
+      setEMsg(
+        (error as any)?.code === "23505"
+          ? "⚠️ Ya existe otro cliente con ese teléfono."
+          : `❌ Error: ${error.message}`
+      );
       return;
     }
 
     setEditOpen(false);
-    setEditId(null);
+    setEditClient(null);
     await load();
     setMsg("✅ Cliente actualizado.");
   }
@@ -177,8 +177,7 @@ export default function ClientesPage() {
   async function delClient(id: string) {
     const ok = confirm("¿Eliminar cliente?");
     if (!ok) return;
-    const { error } = await supabase.from("clients").delete().eq("id", id);
-    if (error) alert(error.message);
+    await supabase.from("clients").delete().eq("id", id);
     await load();
   }
 
@@ -190,6 +189,7 @@ export default function ClientesPage() {
     <main className="space-y-4">
       <h1 className="text-xl font-semibold">Clientes</h1>
 
+      {/* Crear */}
       <div className="border rounded-xl bg-white p-4 space-y-3">
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
           <input className="border rounded-md p-2" placeholder="Nombre y apellidos" value={fullName} onChange={(e) => setFullName(e.target.value)} />
@@ -205,6 +205,7 @@ export default function ClientesPage() {
         {msg && <div className="text-sm text-zinc-700">{msg}</div>}
       </div>
 
+      {/* Lista */}
       <div className="border rounded-xl bg-white overflow-hidden">
         <div className="p-3 text-sm text-zinc-500">{count} clientes</div>
         <div className="divide-y">
@@ -212,11 +213,9 @@ export default function ClientesPage() {
             <div
               key={c.id}
               className="p-3 flex items-start gap-3 hover:bg-zinc-50 cursor-pointer"
-              onClick={() => (window.location.href = `/clientes/${c.id}`)}
-              role="button"
-              tabIndex={0}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") window.location.href = `/clientes/${c.id}`;
+              onClick={() => {
+                if (!c.id) return;
+                window.location.href = `/clientes/${c.id}`;
               }}
             >
               <div className="flex-1">
@@ -253,9 +252,9 @@ export default function ClientesPage() {
       </div>
 
       {/* Modal Editar */}
-      {editOpen && (
+      {editOpen && editClient && (
         <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4">
-          <div className="bg-white w-full max-w-lg rounded-xl p-4 space-y-3 shadow-2xl ring-1 ring-black/10">
+          <div className="bg-white w-full max-w-lg rounded-xl p-4 space-y-3">
             <h2 className="font-semibold">Editar cliente</h2>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
@@ -268,13 +267,7 @@ export default function ClientesPage() {
             {eMsg && <div className="text-sm text-zinc-700">{eMsg}</div>}
 
             <div className="flex gap-2">
-              <button
-                className="flex-1 border rounded-md p-2"
-                onClick={() => {
-                  setEditOpen(false);
-                  setEditId(null);
-                }}
-              >
+              <button className="flex-1 border rounded-md p-2" onClick={() => setEditOpen(false)}>
                 Cancelar
               </button>
               <button className="flex-1 bg-black text-white rounded-md p-2" onClick={saveEdit}>
