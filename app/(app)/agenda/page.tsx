@@ -131,16 +131,6 @@ function parseHHMM(hhmm: string) {
   return { hh, mm };
 }
 
-function isTapOnEvent(target: any) {
-  if (!target) return false;
-  // busca hacia arriba si estás tocando un evento o dentro de él
-  return !!(
-    target.closest?.("[data-rbc-event='1']") ||
-    target.closest?.(".rbc-event") ||
-    target.closest?.(".rbc-event-content")
-  );
-}
-
 export default function AgendaPage() {
   const [loading, setLoading] = useState(true);
   const [events, setEvents] = useState<EventT[]>([]);
@@ -172,7 +162,7 @@ export default function AgendaPage() {
 
   const [saving, setSaving] = useState(false);
 
-  // Móvil: selector día + hora + servicio
+  // Móvil
   const [isMobile, setIsMobile] = useState(false);
   const [mobilePickOpen, setMobilePickOpen] = useState(false);
   const [mobileDay, setMobileDay] = useState<Date | null>(null);
@@ -223,16 +213,12 @@ export default function AgendaPage() {
         .select("id, name, default_duration_min, active_duration_min, default_price")
         .order("name", { ascending: true }),
     ]);
-
-    if (cRes.error) console.error(cRes.error);
-    if (sRes.error) console.error(sRes.error);
-
     setClients((cRes.data ?? []) as Client[]);
     setServices((sRes.data ?? []) as Service[]);
   }
 
   async function loadAppointments() {
-    const { data, error } = await supabase
+    const { data } = await supabase
       .from("appointments")
       .select(
         `id, start_time, end_time, client_id, service_id, price, notes, status, paid, payment_method,
@@ -240,8 +226,6 @@ export default function AgendaPage() {
          services(name, active_duration_min)`
       )
       .order("start_time", { ascending: true });
-
-    if (error) console.error(error);
 
     const rows = (data ?? []) as unknown as Row[];
     setEvents(
@@ -418,7 +402,7 @@ export default function AgendaPage() {
     }
   }
 
-  /* ───────────── Disponibilidad por minutos ACTIVOS ───────────── */
+  // Disponibilidad móvil (igual que tenías)
   const busyIntervals = useMemo(() => {
     if (!mobileDay) return [];
     const day = startOfDayOnly(mobileDay);
@@ -510,7 +494,7 @@ export default function AgendaPage() {
       {isMobile && (
         <div className="border rounded-xl bg-white p-3 flex items-center gap-2">
           <div className="text-sm text-zinc-600">
-            En móvil: toca una cita para editarla. Toca un día/hueco para crear.
+            En iPhone: toca una cita para editarla. Para crear usa “Nueva cita”.
           </div>
           <button
             className="ml-auto bg-black text-white rounded-md px-3 py-2"
@@ -542,29 +526,22 @@ export default function AgendaPage() {
           popup
           step={15}
           timeslots={4}
-          selectable
-          longPressThreshold={10}
-          components={{
-            // Marca el DOM del evento para poder detectarlo en iPhone
-            eventWrapper: (props: any) => (
-              <div data-rbc-event="1">{props.children}</div>
-            ),
-          }}
-          onSelectSlot={(slotInfo: any) => {
-            // ✅ FIX iPhone: si el tap era sobre un evento, no crear
-            const target = slotInfo?.box?.target;
-            if (isMobile && isTapOnEvent(target)) return;
 
-            if (isMobile) return openMobilePickerForDate(slotInfo.start as Date);
+          /* ✅ CLAVE: en móvil NO seleccionamos slots */
+          selectable={!isMobile}
+
+          /* Desktop: crear por arrastre / selección */
+          onSelectSlot={(slotInfo: any) => {
             setCreateSlot({
               start: slotInfo.start as Date,
               end: slotInfo.end as Date,
             });
             setCreateErr(null);
           }}
+
+          /* ✅ En móvil: tocar una CITA siempre abre Editar */
           onSelectEvent={(ev: any) => {
             if (ev?.isHoliday) return;
-
             const e = ev as EventT;
             setEditEvent(e);
             setEditStart(toLocalInputValue(e.start));
@@ -575,9 +552,12 @@ export default function AgendaPage() {
             setEditPaid(!!e.raw.paid);
             setEditPaymentMethod(e.raw.payment_method ?? null);
           }}
+
+          /* ✅ En vista Mes: tocar un día en móvil abre el selector */
           onDrillDown={(date) => {
             if (isMobile) openMobilePickerForDate(date as Date);
           }}
+
           min={new Date(1970, 1, 1, 9, 0)}
           max={new Date(1970, 1, 1, 20, 0)}
           eventPropGetter={(event) => eventStyleGetter(event)}
@@ -591,7 +571,7 @@ export default function AgendaPage() {
         />
       </div>
 
-      {/* Modal selector móvil (crear) */}
+      {/* Modal selector móvil */}
       {mobilePickOpen && mobileDay && (
         <div className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-4">
           <div className="w-full max-w-md rounded-2xl shadow-2xl ring-1 ring-black/10 bg-white p-4 space-y-3">
@@ -742,6 +722,7 @@ export default function AgendaPage() {
               {format(createSlot.end, "HH:mm", { locale: es })}
             </p>
 
+            {/* (tu modal crear igual que ya tenías) */}
             <div className="grid grid-cols-1 gap-3">
               <div>
                 <label className="text-sm font-medium">Cliente</label>
