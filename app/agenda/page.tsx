@@ -9,9 +9,7 @@ import { es } from "date-fns/locale";
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
 
-/* ─────────────────────────────
-   Localización en español
-───────────────────────────── */
+/* ───────────── Localización ES ───────────── */
 const locales = { es };
 const localizer = dateFnsLocalizer({
   format,
@@ -37,9 +35,7 @@ const messages = {
   showMore: (total: number) => `+ Ver ${total} más`,
 };
 
-/* ─────────────────────────────
-   Festivos nacionales 2026
-───────────────────────────── */
+/* ───────────── Festivos 2026 (nacionales) ───────────── */
 function isoDate(d: Date) {
   const y = d.getFullYear();
   const m = String(d.getMonth() + 1).padStart(2, "0");
@@ -64,11 +60,16 @@ const HOLIDAYS_2026: { date: string; name: string }[] = [
 
 const HOLIDAY_SET = new Set(HOLIDAYS_2026.map((h) => h.date));
 
-/* ─────────────────────────────
-   Tipos
-───────────────────────────── */
+/* ───────────── Tipos ───────────── */
 type Client = { id: string; full_name: string; phone: string | null };
-type Service = { id: string; name: string; default_duration_min: number; default_price: number };
+
+type Service = {
+  id: string;
+  name: string;
+  default_duration_min: number; // total
+  active_duration_min: number;  // activo
+  default_price: number;
+};
 
 type Row = {
   id: string;
@@ -82,7 +83,7 @@ type Row = {
   paid: boolean;
   payment_method: "cash" | "card" | "bizum" | null;
   clients: { full_name: string } | null;
-  services: { name: string } | null;
+  services: { name: string; active_duration_min: number | null } | null;
 };
 
 type EventT = {
@@ -98,14 +99,12 @@ function toLocalInputValue(d: Date) {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
-/* ─────────────────────────────
-   Helpers selector móvil
-───────────────────────────── */
+/* ───────────── Helpers ───────────── */
 function buildTimeOptions(startHour = 9, endHour = 20, stepMin = 15) {
   const out: string[] = [];
   for (let h = startHour; h <= endHour; h++) {
     for (let m = 0; m < 60; m += stepMin) {
-      if (h === endHour && m > 0) break; // no pasar de 20:00 exacto
+      if (h === endHour && m > 0) break;
       out.push(`${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`);
     }
   }
@@ -119,17 +118,11 @@ function startOfDayOnly(d: Date) {
   x.setHours(0, 0, 0, 0);
   return x;
 }
-
 function sameDay(a: Date, b: Date) {
-  return (
-    a.getFullYear() === b.getFullYear() &&
-    a.getMonth() === b.getMonth() &&
-    a.getDate() === b.getDate()
-  );
+  return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
 }
-
 function parseHHMM(hhmm: string) {
-  const [hh, mm] = hhmm.split(":").map((x) => Number(x));
+  const [hh, mm] = hhmm.split(":").map(Number);
   return { hh, mm };
 }
 
@@ -161,12 +154,14 @@ export default function AgendaPage() {
 
   const [saving, setSaving] = useState(false);
 
-  // Móvil: selector día + hora
+  // Móvil: selector día + hora + servicio
   const [isMobile, setIsMobile] = useState(false);
   const [mobilePickOpen, setMobilePickOpen] = useState(false);
   const [mobileDay, setMobileDay] = useState<Date | null>(null);
   const [mobileStartHHMM, setMobileStartHHMM] = useState("09:00");
-  const [mobileDuration, setMobileDuration] = useState<number>(30);
+  const [mobileDuration, setMobileDuration] = useState<number>(30); // total
+  const [mobileActive, setMobileActive] = useState<number>(30);     // activo
+  const [mobileServiceId, setMobileServiceId] = useState<string>(""); // opcional
 
   useEffect(() => {
     const check = () => setIsMobile(window.innerWidth < 768);
@@ -180,31 +175,20 @@ export default function AgendaPage() {
       const start = new Date(`${h.date}T00:00:00`);
       const end = new Date(start);
       end.setDate(end.getDate() + 1);
-      return {
-        id: `holiday-${h.date}`,
-        title: `🎉 ${h.name}`,
-        start,
-        end,
-        allDay: true,
-        isHoliday: true,
-      };
+      return { id: `holiday-${h.date}`, title: `🎉 ${h.name}`, start, end, allDay: true, isHoliday: true };
     });
   }, []);
 
   const eventStyleGetter = useMemo(
     () => (event: any) => {
-      if (event?.isHoliday) {
-        return { className: "is-holiday-event text-white rounded-md" };
-      }
+      if (event?.isHoliday) return { className: "is-holiday-event text-white rounded-md" };
       const s = event?.raw?.status;
       const paid = event?.raw?.paid;
-
       let bg = "bg-gray-900";
       if (s === "done") bg = "bg-green-700";
       if (s === "cancelled") bg = "bg-gray-500";
       if (s === "no_show") bg = "bg-red-700";
       if (paid) bg = "bg-blue-700";
-
       return { className: `${bg} text-white rounded-md` };
     },
     []
@@ -218,7 +202,10 @@ export default function AgendaPage() {
   async function loadLists() {
     const [cRes, sRes] = await Promise.all([
       supabase.from("clients").select("id, full_name, phone").order("full_name", { ascending: true }),
-      supabase.from("services").select("id, name, default_duration_min, default_price").order("name", { ascending: true }),
+      supabase
+        .from("services")
+        .select("id, name, default_duration_min, active_duration_min, default_price")
+        .order("name", { ascending: true }),
     ]);
     if (cRes.error) console.error(cRes.error);
     if (sRes.error) console.error(sRes.error);
@@ -232,13 +219,13 @@ export default function AgendaPage() {
       .select(
         `id, start_time, end_time, client_id, service_id, price, notes, status, paid, payment_method,
          clients(full_name),
-         services(name)`
+         services(name, active_duration_min)`
       )
       .order("start_time", { ascending: true });
 
     if (error) console.error(error);
-
     const rows = (data ?? []) as unknown as Row[];
+
     setEvents(
       rows.map((r) => ({
         id: r.id,
@@ -274,7 +261,7 @@ export default function AgendaPage() {
     if (!name) throw new Error("Indica el nombre del servicio.");
     const { data, error } = await supabase
       .from("services")
-      .insert({ name, default_duration_min: 30, default_price: 0 })
+      .insert({ name, default_duration_min: 30, active_duration_min: 30, default_price: 0 })
       .select("id")
       .single();
     if (error) throw new Error(error.message);
@@ -284,16 +271,18 @@ export default function AgendaPage() {
   function openMobilePickerForDate(date: Date) {
     const d0 = startOfDayOnly(date);
     setMobileDay(d0);
+    setMobileServiceId("");
     setMobileDuration(30);
+    setMobileActive(30);
     setMobileStartHHMM("09:00");
     setMobilePickOpen(true);
   }
 
-  function openCreateFromDayAndTime(day: Date, hhmmStr: string, durationMin: number) {
+  function openCreateFromDayAndTime(day: Date, hhmmStr: string, totalMin: number) {
     const { hh, mm } = parseHHMM(hhmmStr);
     const start = new Date(day);
     start.setHours(hh, mm, 0, 0);
-    const end = addMinutes(start, durationMin);
+    const end = addMinutes(start, totalMin);
     setCreateSlot({ start, end });
     setCreateErr(null);
   }
@@ -305,6 +294,7 @@ export default function AgendaPage() {
     try {
       const clientId = await getOrCreateClientId();
       const serviceId = await getOrCreateServiceId();
+
       const p = createPrice.trim() ? Number(createPrice.replace(",", ".")) : null;
       if (p !== null && Number.isNaN(p)) throw new Error("Precio inválido.");
 
@@ -338,103 +328,54 @@ export default function AgendaPage() {
     }
   }
 
-  async function saveEdit() {
-    if (!editEvent) return;
-    setSaving(true);
-    try {
-      const p = editPrice.trim() ? Number(editPrice.replace(",", ".")) : null;
-      if (p !== null && Number.isNaN(p)) throw new Error("Precio inválido.");
-
-      const start = new Date(editStart);
-      const end = new Date(editEnd);
-      if (Number.isNaN(start.getTime())) throw new Error("Hora inicio inválida.");
-      if (Number.isNaN(end.getTime())) throw new Error("Hora fin inválida.");
-      if (end <= start) throw new Error("La hora fin debe ser posterior a inicio.");
-
-      const { error } = await supabase
-        .from("appointments")
-        .update({
-          start_time: start.toISOString(),
-          end_time: end.toISOString(),
-          price: p,
-          notes: editNotes.trim() ? editNotes.trim() : null,
-          status: editStatus,
-          paid: editPaid,
-          payment_method: editPaid ? editPaymentMethod : null,
-        })
-        .eq("id", editEvent.id);
-
-      if (error) throw new Error(error.message);
-
-      setEditEvent(null);
-      await loadAppointments();
-    } catch (e: any) {
-      alert(e?.message ?? "Error al guardar.");
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  async function deleteAppointment() {
-    if (!editEvent) return;
-    const ok = confirm("¿Eliminar cita? (No se puede deshacer)");
-    if (!ok) return;
-    setSaving(true);
-    const { error } = await supabase.from("appointments").delete().eq("id", editEvent.id);
-    if (error) alert(error.message);
-    setEditEvent(null);
-    await loadAppointments();
-    setSaving(false);
-  }
-
-  /* ─────────────────────────────
-     Disponibilidad en móvil (ocultar horas ocupadas)
-  ───────────────────────────── */
+  /* ───────────── Disponibilidad por minutos ACTIVOS ───────────── */
   const busyIntervals = useMemo(() => {
     if (!mobileDay) return [];
     const day = startOfDayOnly(mobileDay);
 
-    // Solo citas (no festivos) del mismo día
     const todays = events.filter((e) => sameDay(e.start, day));
 
-    return todays.map((e) => ({
-      start: new Date(e.start),
-      end: new Date(e.end),
-    }));
+    return todays.map((e) => {
+      const activeMinFromService = e.raw.services?.active_duration_min ?? null;
+      const totalMin = Math.max(1, Math.round((e.end.getTime() - e.start.getTime()) / 60000));
+      const activeMin = Math.min(activeMinFromService ?? totalMin, totalMin); // clamp
+      return {
+        start: new Date(e.start),
+        end: addMinutes(new Date(e.start), activeMin), // 👈 solo bloquea activo
+      };
+    });
   }, [events, mobileDay]);
 
   const availableStartTimes = useMemo(() => {
     if (!mobileDay) return TIME_OPTIONS;
 
-    // Horario negocio: 09:00 - 20:00 (fin)
     const day = startOfDayOnly(mobileDay);
     const businessEnd = new Date(day);
     businessEnd.setHours(20, 0, 0, 0);
 
-    const duration = mobileDuration;
+    const activeToBlock = Math.max(1, Math.min(mobileActive, mobileDuration)); // clamp
 
     const isFree = (hhmmStr: string) => {
       const { hh, mm } = parseHHMM(hhmmStr);
-
       const start = new Date(day);
       start.setHours(hh, mm, 0, 0);
-      const end = addMinutes(start, duration);
 
-      // No permitir que se pase de 20:00
-      if (end > businessEnd) return false;
+      const endTotal = addMinutes(start, mobileDuration);
+      const endActive = addMinutes(start, activeToBlock);
 
-      // Solape con cualquier cita existente:
-      // overlap si start < busyEnd && end > busyStart
+      // No permitir que el total se pase de 20:00
+      if (endTotal > businessEnd) return false;
+
+      // Solape SOLO con bloque activo
       for (const b of busyIntervals) {
-        if (start < b.end && end > b.start) return false;
+        if (start < b.end && endActive > b.start) return false;
       }
       return true;
     };
 
     return TIME_OPTIONS.filter(isFree);
-  }, [mobileDay, mobileDuration, busyIntervals]);
+  }, [mobileDay, mobileDuration, mobileActive, busyIntervals]);
 
-  // Si la hora seleccionada ya no está disponible (por cambiar duración o día), pon la primera libre
   useEffect(() => {
     if (!mobilePickOpen) return;
     if (!mobileDay) return;
@@ -443,8 +384,7 @@ export default function AgendaPage() {
     if (!availableStartTimes.includes(mobileStartHHMM)) {
       setMobileStartHHMM(availableStartTimes[0]);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [availableStartTimes, mobilePickOpen, mobileDay]);
+  }, [availableStartTimes, mobilePickOpen, mobileDay, mobileStartHHMM]);
 
   const mobileEndLabel = useMemo(() => {
     if (!mobileDay) return "";
@@ -455,6 +395,16 @@ export default function AgendaPage() {
     const end = addMinutes(start, mobileDuration);
     return format(end, "HH:mm");
   }, [mobileDay, mobileStartHHMM, mobileDuration]);
+
+  const mobileActiveLabel = useMemo(() => {
+    if (!mobileDay) return "";
+    const day = startOfDayOnly(mobileDay);
+    const { hh, mm } = parseHHMM(mobileStartHHMM);
+    const start = new Date(day);
+    start.setHours(hh, mm, 0, 0);
+    const end = addMinutes(start, Math.max(1, Math.min(mobileActive, mobileDuration)));
+    return format(end, "HH:mm");
+  }, [mobileDay, mobileStartHHMM, mobileDuration, mobileActive]);
 
   if (loading) return <div className="p-4">Cargando…</div>;
 
@@ -473,16 +423,10 @@ export default function AgendaPage() {
         </button>
       </div>
 
-      {/* Botón extra en móvil */}
       {isMobile && (
         <div className="border rounded-xl bg-white p-3 flex items-center gap-2">
-          <div className="text-sm text-zinc-600">
-            En móvil: toca un día/casilla o usa “Nueva cita”.
-          </div>
-          <button
-            className="ml-auto bg-black text-white rounded-md px-3 py-2"
-            onClick={() => openMobilePickerForDate(new Date())}
-          >
+          <div className="text-sm text-zinc-600">En móvil: toca un día/casilla o usa “Nueva cita”.</div>
+          <button className="ml-auto bg-black text-white rounded-md px-3 py-2" onClick={() => openMobilePickerForDate(new Date())}>
             Nueva cita
           </button>
         </div>
@@ -493,7 +437,14 @@ export default function AgendaPage() {
           localizer={localizer}
           culture="es"
           messages={messages}
-          events={[...holidayEvents, ...events]}
+          events={[...HOLIDAYS_2026.map(h => ({
+            id: `holiday-${h.date}`,
+            title: `🎉 ${h.name}`,
+            start: new Date(`${h.date}T00:00:00`),
+            end: new Date(`${h.date}T23:59:59`),
+            allDay: true,
+            isHoliday: true,
+          })), ...events]}
           defaultView={Views.WEEK}
           views={[Views.DAY, Views.WEEK, Views.MONTH]}
           popup
@@ -502,12 +453,7 @@ export default function AgendaPage() {
           selectable
           longPressThreshold={10}
           onSelectSlot={(slot) => {
-            // Móvil: tocar abre selector día+hora
-            if (isMobile) {
-              openMobilePickerForDate(slot.start as Date);
-              return;
-            }
-            // Desktop: selección normal
+            if (isMobile) return openMobilePickerForDate(slot.start as Date);
             setCreateSlot({ start: slot.start as Date, end: slot.end as Date });
             setCreateErr(null);
           }}
@@ -516,7 +462,6 @@ export default function AgendaPage() {
           }}
           onSelectEvent={(ev: any) => {
             if (ev?.isHoliday) return;
-
             const e = ev as EventT;
             setEditEvent(e);
             setEditStart(toLocalInputValue(e.start));
@@ -540,7 +485,7 @@ export default function AgendaPage() {
         />
       </div>
 
-      {/* Modal selector móvil: día + hora (solo horas libres) */}
+      {/* Modal selector móvil: ahora elige SERVICIO para saber minutos activos */}
       {mobilePickOpen && mobileDay && (
         <div className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-4">
           <div className="w-full max-w-md rounded-2xl shadow-2xl ring-1 ring-black/10 bg-white opacity-100 p-4 space-y-3">
@@ -548,6 +493,38 @@ export default function AgendaPage() {
 
             <div className="text-sm text-zinc-700">
               Día: <b>{format(mobileDay, "EEEE dd/MM/yyyy", { locale: es })}</b>
+            </div>
+
+            <div>
+              <label className="text-sm font-medium">Servicio</label>
+              <select
+                className="w-full border rounded-md p-2 bg-white"
+                value={mobileServiceId}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  setMobileServiceId(v);
+
+                  const s = services.find((x) => x.id === v);
+                  if (s) {
+                    setMobileDuration(s.default_duration_min);
+                    setMobileActive(s.active_duration_min ?? s.default_duration_min);
+                  } else {
+                    setMobileDuration(30);
+                    setMobileActive(30);
+                  }
+                }}
+              >
+                <option value="">(Opcional) Sin servicio</option>
+                {services.map((s) => (
+                  <option key={s.id} value={s.id}>
+                    {s.name} · total {s.default_duration_min} · activo {s.active_duration_min ?? s.default_duration_min}
+                  </option>
+                ))}
+              </select>
+
+              <p className="text-xs text-zinc-600 mt-1">
+                La disponibilidad se calcula con el <b>tiempo activo</b> del servicio.
+              </p>
             </div>
 
             <div className="grid grid-cols-2 gap-3">
@@ -572,11 +549,16 @@ export default function AgendaPage() {
               </div>
 
               <div>
-                <label className="text-sm font-medium">Duración</label>
+                <label className="text-sm font-medium">Duración total</label>
                 <select
                   className="w-full border rounded-md p-2 bg-white"
                   value={String(mobileDuration)}
-                  onChange={(e) => setMobileDuration(Number(e.target.value))}
+                  onChange={(e) => {
+                    const v = Number(e.target.value);
+                    setMobileDuration(v);
+                    // si duración baja, clamp activo
+                    setMobileActive((a) => Math.min(a, v));
+                  }}
                 >
                   {DURATION_OPTIONS.map((d) => (
                     <option key={d} value={d}>
@@ -588,12 +570,18 @@ export default function AgendaPage() {
             </div>
 
             {availableStartTimes.length === 0 ? (
-              <div className="text-sm text-red-600">
-                No hay huecos disponibles para esa duración en este día.
-              </div>
+              <div className="text-sm text-red-600">No hay huecos disponibles para esa duración/activo en este día.</div>
             ) : (
-              <div className="text-sm text-zinc-700">
-                Fin: <b>{mobileEndLabel}</b> · Huecos disponibles: <b>{availableStartTimes.length}</b>
+              <div className="text-sm text-zinc-700 space-y-1">
+                <div>
+                  Fin total: <b>{mobileEndLabel}</b>
+                </div>
+                <div>
+                  Bloqueo activo hasta: <b>{mobileActiveLabel}</b> <span className="text-zinc-500">(puedes atender a otra persona después)</span>
+                </div>
+                <div>
+                  Huecos: <b>{availableStartTimes.length}</b>
+                </div>
               </div>
             )}
 
@@ -605,6 +593,15 @@ export default function AgendaPage() {
                 className="flex-1 bg-black text-white rounded-md p-2"
                 disabled={availableStartTimes.length === 0}
                 onClick={() => {
+                  // Prefill del servicio en el modal principal
+                  if (mobileServiceId) {
+                    setCreateServiceId(mobileServiceId);
+                    const s = services.find((x) => x.id === mobileServiceId);
+                    if (s) setCreatePrice(String(s.default_price ?? ""));
+                  } else {
+                    setCreateServiceId("__new__");
+                  }
+
                   openCreateFromDayAndTime(new Date(mobileDay), mobileStartHHMM, mobileDuration);
                   setMobilePickOpen(false);
                 }}
@@ -616,24 +613,19 @@ export default function AgendaPage() {
         </div>
       )}
 
-      {/* Modal CREAR */}
+      {/* Modal crear (igual que tenías) */}
       {createSlot && (
         <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4">
           <div className="bg-white w-full max-w-lg rounded-xl p-4 space-y-3 shadow-2xl ring-1 ring-black/10">
             <h2 className="font-semibold">Nueva cita</h2>
             <p className="text-sm text-zinc-600">
-              {format(createSlot.start, "EEE dd/MM HH:mm", { locale: es })} →{" "}
-              {format(createSlot.end, "HH:mm", { locale: es })}
+              {format(createSlot.start, "EEE dd/MM HH:mm", { locale: es })} → {format(createSlot.end, "HH:mm", { locale: es })}
             </p>
 
             <div className="grid grid-cols-1 gap-3">
               <div>
                 <label className="text-sm font-medium">Cliente</label>
-                <select
-                  className="w-full border rounded-md p-2 bg-white"
-                  value={createClientId}
-                  onChange={(e) => setCreateClientId(e.target.value)}
-                >
+                <select className="w-full border rounded-md p-2 bg-white" value={createClientId} onChange={(e) => setCreateClientId(e.target.value)}>
                   <option value="__new__">+ Nuevo cliente…</option>
                   {clients.map((c) => (
                     <option key={c.id} value={c.id}>
@@ -642,12 +634,7 @@ export default function AgendaPage() {
                   ))}
                 </select>
                 {createClientId === "__new__" && (
-                  <input
-                    className="mt-2 w-full border rounded-md p-2"
-                    placeholder="Nombre del cliente"
-                    value={createClientName}
-                    onChange={(e) => setCreateClientName(e.target.value)}
-                  />
+                  <input className="mt-2 w-full border rounded-md p-2" placeholder="Nombre del cliente" value={createClientName} onChange={(e) => setCreateClientName(e.target.value)} />
                 )}
               </div>
 
@@ -671,38 +658,21 @@ export default function AgendaPage() {
                   ))}
                 </select>
                 {createServiceId === "__new__" && (
-                  <input
-                    className="mt-2 w-full border rounded-md p-2"
-                    placeholder="Nombre del servicio"
-                    value={createServiceName}
-                    onChange={(e) => setCreateServiceName(e.target.value)}
-                  />
+                  <input className="mt-2 w-full border rounded-md p-2" placeholder="Nombre del servicio" value={createServiceName} onChange={(e) => setCreateServiceName(e.target.value)} />
                 )}
               </div>
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="text-sm font-medium">Precio</label>
-                  <input
-                    className="w-full border rounded-md p-2"
-                    placeholder="(opcional)"
-                    value={createPrice}
-                    onChange={(e) => setCreatePrice(e.target.value)}
-                  />
+                  <input className="w-full border rounded-md p-2" placeholder="(opcional)" value={createPrice} onChange={(e) => setCreatePrice(e.target.value)} />
                 </div>
-                <div className="text-sm text-zinc-500 flex items-end">
-                  (En móvil se ocultan horas ocupadas)
-                </div>
+                <div className="text-sm text-zinc-500 flex items-end">(El bloqueo usa “activo” del servicio)</div>
               </div>
 
               <div>
                 <label className="text-sm font-medium">Notas</label>
-                <textarea
-                  className="w-full border rounded-md p-2"
-                  rows={3}
-                  value={createNotes}
-                  onChange={(e) => setCreateNotes(e.target.value)}
-                />
+                <textarea className="w-full border rounded-md p-2" rows={3} value={createNotes} onChange={(e) => setCreateNotes(e.target.value)} />
               </div>
             </div>
 
@@ -713,111 +683,6 @@ export default function AgendaPage() {
                 Cancelar
               </button>
               <button className="flex-1 bg-black text-white rounded-md p-2" disabled={saving} onClick={createAppointment}>
-                {saving ? "Guardando..." : "Guardar"}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Modal EDITAR */}
-      {editEvent && (
-        <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4">
-          <div className="bg-white w-full max-w-lg rounded-xl p-4 space-y-3 shadow-2xl ring-1 ring-black/10">
-            <h2 className="font-semibold">Editar cita</h2>
-
-            <div className="text-sm text-zinc-600">
-              <div>
-                <span className="font-medium">Cliente:</span> {editEvent.raw.clients?.full_name ?? "-"}
-              </div>
-              <div>
-                <span className="font-medium">Servicio:</span> {editEvent.raw.services?.name ?? "-"}
-              </div>
-            </div>
-
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="text-sm font-medium">Inicio</label>
-                <input
-                  className="w-full border rounded-md p-2"
-                  type="datetime-local"
-                  value={editStart}
-                  onChange={(e) => setEditStart(e.target.value)}
-                />
-              </div>
-              <div>
-                <label className="text-sm font-medium">Fin</label>
-                <input
-                  className="w-full border rounded-md p-2"
-                  type="datetime-local"
-                  value={editEnd}
-                  onChange={(e) => setEditEnd(e.target.value)}
-                />
-              </div>
-            </div>
-
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="text-sm font-medium">Precio</label>
-                <input
-                  className="w-full border rounded-md p-2"
-                  value={editPrice}
-                  onChange={(e) => setEditPrice(e.target.value)}
-                />
-              </div>
-              <div>
-                <label className="text-sm font-medium">Estado</label>
-                <select
-                  className="w-full border rounded-md p-2 bg-white"
-                  value={editStatus}
-                  onChange={(e) => setEditStatus(e.target.value as any)}
-                >
-                  <option value="reserved">Reservada</option>
-                  <option value="done">Realizada</option>
-                  <option value="cancelled">Cancelada</option>
-                  <option value="no_show">No show</option>
-                </select>
-              </div>
-            </div>
-
-            <div>
-              <label className="text-sm font-medium">Notas</label>
-              <textarea
-                className="w-full border rounded-md p-2"
-                rows={3}
-                value={editNotes}
-                onChange={(e) => setEditNotes(e.target.value)}
-              />
-            </div>
-
-            <div className="border rounded-md p-3 bg-zinc-50 space-y-2">
-              <label className="flex items-center gap-2 text-sm">
-                <input type="checkbox" checked={editPaid} onChange={(e) => setEditPaid(e.target.checked)} />
-                Pagada
-              </label>
-
-              {editPaid && (
-                <select
-                  className="w-full border rounded-md p-2 bg-white"
-                  value={editPaymentMethod ?? ""}
-                  onChange={(e) => setEditPaymentMethod((e.target.value || null) as any)}
-                >
-                  <option value="">Selecciona método…</option>
-                  <option value="cash">Efectivo</option>
-                  <option value="card">Tarjeta</option>
-                  <option value="bizum">Bizum</option>
-                </select>
-              )}
-            </div>
-
-            <div className="flex gap-2">
-              <button className="flex-1 border rounded-md p-2" disabled={saving} onClick={() => setEditEvent(null)}>
-                Cerrar
-              </button>
-              <button className="flex-1 border rounded-md p-2" disabled={saving} onClick={deleteAppointment}>
-                Eliminar
-              </button>
-              <button className="flex-1 bg-black text-white rounded-md p-2" disabled={saving} onClick={saveEdit}>
                 {saving ? "Guardando..." : "Guardar"}
               </button>
             </div>
