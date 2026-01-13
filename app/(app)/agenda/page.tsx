@@ -57,7 +57,6 @@ const HOLIDAYS_2026: { date: string; name: string }[] = [
   { date: "2026-12-08", name: "Inmaculada Concepción" },
   { date: "2026-12-25", name: "Navidad" },
 ];
-
 const HOLIDAY_SET = new Set(HOLIDAYS_2026.map((h) => h.date));
 
 /* ───────────── Tipos ───────────── */
@@ -214,8 +213,10 @@ export default function AgendaPage() {
         .select("id, name, default_duration_min, active_duration_min, default_price")
         .order("name", { ascending: true }),
     ]);
+
     if (cRes.error) console.error(cRes.error);
     if (sRes.error) console.error(sRes.error);
+
     setClients((cRes.data ?? []) as Client[]);
     setServices((sRes.data ?? []) as Service[]);
   }
@@ -349,18 +350,72 @@ export default function AgendaPage() {
     }
   }
 
+  async function saveEdit() {
+    if (!editEvent) return;
+    setSaving(true);
+
+    try {
+      const p = editPrice.trim() ? Number(editPrice.replace(",", ".")) : null;
+      if (p !== null && Number.isNaN(p)) throw new Error("Precio inválido.");
+
+      const start = new Date(editStart);
+      const end = new Date(editEnd);
+      if (Number.isNaN(start.getTime())) throw new Error("Hora inicio inválida.");
+      if (Number.isNaN(end.getTime())) throw new Error("Hora fin inválida.");
+      if (end <= start) throw new Error("La hora fin debe ser posterior a inicio.");
+
+      const { error } = await supabase
+        .from("appointments")
+        .update({
+          start_time: start.toISOString(),
+          end_time: end.toISOString(),
+          price: p,
+          notes: editNotes.trim() ? editNotes.trim() : null,
+          status: editStatus,
+          paid: editPaid,
+          payment_method: editPaid ? editPaymentMethod : null,
+        })
+        .eq("id", editEvent.id);
+
+      if (error) throw new Error(error.message);
+
+      setEditEvent(null);
+      await loadAppointments();
+    } catch (e: any) {
+      alert(e?.message ?? "Error al guardar.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function deleteAppointment() {
+    if (!editEvent) return;
+    const ok = confirm("¿Eliminar cita? (No se puede deshacer)");
+    if (!ok) return;
+
+    setSaving(true);
+    try {
+      const { error } = await supabase.from("appointments").delete().eq("id", editEvent.id);
+      if (error) throw new Error(error.message);
+      setEditEvent(null);
+      await loadAppointments();
+    } catch (e: any) {
+      alert(e?.message ?? "Error al eliminar.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
   /* ───────────── Disponibilidad por minutos ACTIVOS ───────────── */
   const busyIntervals = useMemo(() => {
     if (!mobileDay) return [];
     const day = startOfDayOnly(mobileDay);
+
     const todays = events.filter((e) => sameDay(e.start, day));
 
     return todays.map((e) => {
       const activeMinFromService = e.raw.services?.active_duration_min ?? null;
-      const totalMin = Math.max(
-        1,
-        Math.round((e.end.getTime() - e.start.getTime()) / 60000)
-      );
+      const totalMin = Math.max(1, Math.round((e.end.getTime() - e.start.getTime()) / 60000));
       const activeMin = Math.min(activeMinFromService ?? totalMin, totalMin);
       return {
         start: new Date(e.start),
@@ -433,21 +488,12 @@ export default function AgendaPage() {
     <main className="space-y-3">
       <div className="flex items-center gap-2">
         <h1 className="text-xl font-semibold">Agenda (por horas)</h1>
-        <button
-          className="ml-auto border rounded-md px-3 py-1 bg-white"
-          onClick={async () => {
-            await supabase.auth.signOut();
-            window.location.href = "/login";
-          }}
-        >
-          Salir
-        </button>
       </div>
 
       {isMobile && (
         <div className="border rounded-xl bg-white p-3 flex items-center gap-2">
           <div className="text-sm text-zinc-600">
-            En móvil: toca un día/casilla o usa “Nueva cita”.
+            En móvil: toca un día para crear, o toca una cita para editarla.
           </div>
           <button
             className="ml-auto bg-black text-white rounded-md px-3 py-2"
@@ -481,16 +527,16 @@ export default function AgendaPage() {
           timeslots={4}
           selectable
           longPressThreshold={10}
-          onSelectSlot={(slot) => {
-            if (isMobile) return openMobilePickerForDate(slot.start as Date);
-            setCreateSlot({ start: slot.start as Date, end: slot.end as Date });
+          onSelectSlot={(slotInfo: any) => {
+            // Si clicas sobre un hueco: crear
+            if (isMobile) return openMobilePickerForDate(slotInfo.start as Date);
+            setCreateSlot({ start: slotInfo.start as Date, end: slotInfo.end as Date });
             setCreateErr(null);
           }}
-          onDrillDown={(date) => {
-            if (isMobile) openMobilePickerForDate(date as Date);
-          }}
           onSelectEvent={(ev: any) => {
+            // Si clicas una cita existente: editar
             if (ev?.isHoliday) return;
+
             const e = ev as EventT;
             setEditEvent(e);
             setEditStart(toLocalInputValue(e.start));
@@ -500,6 +546,10 @@ export default function AgendaPage() {
             setEditStatus(e.raw.status);
             setEditPaid(!!e.raw.paid);
             setEditPaymentMethod(e.raw.payment_method ?? null);
+          }}
+          onDrillDown={(date) => {
+            // En móvil, tocar un día en vista mes -> abrir picker
+            if (isMobile) openMobilePickerForDate(date as Date);
           }}
           min={new Date(1970, 1, 1, 9, 0)}
           max={new Date(1970, 1, 1, 20, 0)}
@@ -514,10 +564,10 @@ export default function AgendaPage() {
         />
       </div>
 
-      {/* Modal selector móvil */}
+      {/* Modal selector móvil (crear) */}
       {mobilePickOpen && mobileDay && (
         <div className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-4">
-          <div className="w-full max-w-md rounded-2xl shadow-2xl ring-1 ring-black/10 bg-white opacity-100 p-4 space-y-3">
+          <div className="w-full max-w-md rounded-2xl shadow-2xl ring-1 ring-black/10 bg-white p-4 space-y-3">
             <h2 className="font-semibold">Nueva cita (móvil)</h2>
 
             <div className="text-sm text-zinc-700">
@@ -551,7 +601,6 @@ export default function AgendaPage() {
                   </option>
                 ))}
               </select>
-
               <p className="text-xs text-zinc-600 mt-1">
                 La disponibilidad se calcula con el <b>tiempo activo</b> del servicio.
               </p>
@@ -618,10 +667,7 @@ export default function AgendaPage() {
             )}
 
             <div className="flex gap-2 pt-1">
-              <button
-                className="flex-1 border rounded-md p-2"
-                onClick={() => setMobilePickOpen(false)}
-              >
+              <button className="flex-1 border rounded-md p-2" onClick={() => setMobilePickOpen(false)}>
                 Cancelar
               </button>
               <button
@@ -740,17 +786,134 @@ export default function AgendaPage() {
             {createErr && <p className="text-sm text-red-600">{createErr}</p>}
 
             <div className="flex gap-2">
+              <button className="flex-1 border rounded-md p-2" disabled={saving} onClick={() => setCreateSlot(null)}>
+                Cancelar
+              </button>
+              <button className="flex-1 bg-black text-white rounded-md p-2" disabled={saving} onClick={createAppointment}>
+                {saving ? "Guardando..." : "Guardar"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal editar */}
+      {editEvent && (
+        <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4">
+          <div className="bg-white w-full max-w-lg rounded-xl p-4 space-y-3 shadow-2xl ring-1 ring-black/10">
+            <h2 className="font-semibold">Editar cita</h2>
+
+            <div className="text-sm text-zinc-600">
+              <div>
+                <span className="font-medium">Cliente:</span>{" "}
+                {editEvent.raw.clients?.full_name ?? "-"}
+              </div>
+              <div>
+                <span className="font-medium">Servicio:</span>{" "}
+                {editEvent.raw.services?.name ?? "-"}
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="text-sm font-medium">Inicio</label>
+                <input
+                  className="w-full border rounded-md p-2"
+                  type="datetime-local"
+                  value={editStart}
+                  onChange={(e) => setEditStart(e.target.value)}
+                />
+              </div>
+              <div>
+                <label className="text-sm font-medium">Fin</label>
+                <input
+                  className="w-full border rounded-md p-2"
+                  type="datetime-local"
+                  value={editEnd}
+                  onChange={(e) => setEditEnd(e.target.value)}
+                />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="text-sm font-medium">Precio</label>
+                <input
+                  className="w-full border rounded-md p-2"
+                  value={editPrice}
+                  onChange={(e) => setEditPrice(e.target.value)}
+                />
+              </div>
+              <div>
+                <label className="text-sm font-medium">Estado</label>
+                <select
+                  className="w-full border rounded-md p-2 bg-white"
+                  value={editStatus}
+                  onChange={(e) => setEditStatus(e.target.value as any)}
+                >
+                  <option value="reserved">Reservada</option>
+                  <option value="done">Realizada</option>
+                  <option value="cancelled">Cancelada</option>
+                  <option value="no_show">No show</option>
+                </select>
+              </div>
+            </div>
+
+            <div>
+              <label className="text-sm font-medium">Notas</label>
+              <textarea
+                className="w-full border rounded-md p-2"
+                rows={3}
+                value={editNotes}
+                onChange={(e) => setEditNotes(e.target.value)}
+              />
+            </div>
+
+            <div className="border rounded-md p-3 bg-zinc-50 space-y-2">
+              <label className="flex items-center gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  checked={editPaid}
+                  onChange={(e) => setEditPaid(e.target.checked)}
+                />
+                Pagada
+              </label>
+
+              {editPaid && (
+                <select
+                  className="w-full border rounded-md p-2 bg-white"
+                  value={editPaymentMethod ?? ""}
+                  onChange={(e) =>
+                    setEditPaymentMethod((e.target.value || null) as any)
+                  }
+                >
+                  <option value="">Selecciona método…</option>
+                  <option value="cash">Efectivo</option>
+                  <option value="card">Tarjeta</option>
+                  <option value="bizum">Bizum</option>
+                </select>
+              )}
+            </div>
+
+            <div className="flex gap-2">
               <button
                 className="flex-1 border rounded-md p-2"
                 disabled={saving}
-                onClick={() => setCreateSlot(null)}
+                onClick={() => setEditEvent(null)}
               >
-                Cancelar
+                Cerrar
+              </button>
+              <button
+                className="flex-1 border rounded-md p-2"
+                disabled={saving}
+                onClick={deleteAppointment}
+              >
+                Eliminar
               </button>
               <button
                 className="flex-1 bg-black text-white rounded-md p-2"
                 disabled={saving}
-                onClick={createAppointment}
+                onClick={saveEdit}
               >
                 {saving ? "Guardando..." : "Guardar"}
               </button>
