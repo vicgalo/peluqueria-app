@@ -120,6 +120,19 @@ function startOfDayOnly(d: Date) {
   return x;
 }
 
+function sameDay(a: Date, b: Date) {
+  return (
+    a.getFullYear() === b.getFullYear() &&
+    a.getMonth() === b.getMonth() &&
+    a.getDate() === b.getDate()
+  );
+}
+
+function parseHHMM(hhmm: string) {
+  const [hh, mm] = hhmm.split(":").map((x) => Number(x));
+  return { hh, mm };
+}
+
 export default function AgendaPage() {
   const [loading, setLoading] = useState(true);
   const [events, setEvents] = useState<EventT[]>([]);
@@ -271,13 +284,13 @@ export default function AgendaPage() {
   function openMobilePickerForDate(date: Date) {
     const d0 = startOfDayOnly(date);
     setMobileDay(d0);
-    setMobileStartHHMM("09:00");
     setMobileDuration(30);
+    setMobileStartHHMM("09:00");
     setMobilePickOpen(true);
   }
 
   function openCreateFromDayAndTime(day: Date, hhmmStr: string, durationMin: number) {
-    const [hh, mm] = hhmmStr.split(":").map((x) => Number(x));
+    const { hh, mm } = parseHHMM(hhmmStr);
     const start = new Date(day);
     start.setHours(hh, mm, 0, 0);
     const end = addMinutes(start, durationMin);
@@ -374,11 +387,70 @@ export default function AgendaPage() {
     setSaving(false);
   }
 
-  // Fin calculado del selector móvil (sin mutar estado)
+  /* ─────────────────────────────
+     Disponibilidad en móvil (ocultar horas ocupadas)
+  ───────────────────────────── */
+  const busyIntervals = useMemo(() => {
+    if (!mobileDay) return [];
+    const day = startOfDayOnly(mobileDay);
+
+    // Solo citas (no festivos) del mismo día
+    const todays = events.filter((e) => sameDay(e.start, day));
+
+    return todays.map((e) => ({
+      start: new Date(e.start),
+      end: new Date(e.end),
+    }));
+  }, [events, mobileDay]);
+
+  const availableStartTimes = useMemo(() => {
+    if (!mobileDay) return TIME_OPTIONS;
+
+    // Horario negocio: 09:00 - 20:00 (fin)
+    const day = startOfDayOnly(mobileDay);
+    const businessEnd = new Date(day);
+    businessEnd.setHours(20, 0, 0, 0);
+
+    const duration = mobileDuration;
+
+    const isFree = (hhmmStr: string) => {
+      const { hh, mm } = parseHHMM(hhmmStr);
+
+      const start = new Date(day);
+      start.setHours(hh, mm, 0, 0);
+      const end = addMinutes(start, duration);
+
+      // No permitir que se pase de 20:00
+      if (end > businessEnd) return false;
+
+      // Solape con cualquier cita existente:
+      // overlap si start < busyEnd && end > busyStart
+      for (const b of busyIntervals) {
+        if (start < b.end && end > b.start) return false;
+      }
+      return true;
+    };
+
+    return TIME_OPTIONS.filter(isFree);
+  }, [mobileDay, mobileDuration, busyIntervals]);
+
+  // Si la hora seleccionada ya no está disponible (por cambiar duración o día), pon la primera libre
+  useEffect(() => {
+    if (!mobilePickOpen) return;
+    if (!mobileDay) return;
+    if (availableStartTimes.length === 0) return;
+
+    if (!availableStartTimes.includes(mobileStartHHMM)) {
+      setMobileStartHHMM(availableStartTimes[0]);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [availableStartTimes, mobilePickOpen, mobileDay]);
+
   const mobileEndLabel = useMemo(() => {
     if (!mobileDay) return "";
-    const [hh, mm] = mobileStartHHMM.split(":").map(Number);
-    const start = new Date(mobileDay);
+    const day = startOfDayOnly(mobileDay);
+    const { hh, mm } = parseHHMM(mobileStartHHMM);
+    const start = new Date(day);
     start.setHours(hh, mm, 0, 0);
     const end = addMinutes(start, mobileDuration);
     return format(end, "HH:mm");
@@ -428,19 +500,18 @@ export default function AgendaPage() {
           step={15}
           timeslots={4}
           selectable
-          longPressThreshold={10} /* 👈 clave: en iPhone “tap” funciona mejor */
+          longPressThreshold={10}
           onSelectSlot={(slot) => {
-            // ✅ En móvil: tocando cualquier casilla/slot abrimos el selector (también en vista Mes)
+            // Móvil: tocar abre selector día+hora
             if (isMobile) {
               openMobilePickerForDate(slot.start as Date);
               return;
             }
-            // Desktop: comportamiento normal
+            // Desktop: selección normal
             setCreateSlot({ start: slot.start as Date, end: slot.end as Date });
             setCreateErr(null);
           }}
           onDrillDown={(date) => {
-            // Fallback adicional por si el tap cae aquí
             if (isMobile) openMobilePickerForDate(date as Date);
           }}
           onSelectEvent={(ev: any) => {
@@ -469,7 +540,7 @@ export default function AgendaPage() {
         />
       </div>
 
-      {/* Modal selector móvil: día + hora (ahora opaco y legible) */}
+      {/* Modal selector móvil: día + hora (solo horas libres) */}
       {mobilePickOpen && mobileDay && (
         <div className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-4">
           <div className="w-full max-w-md rounded-2xl shadow-2xl ring-1 ring-black/10 bg-white opacity-100 p-4 space-y-3">
@@ -486,12 +557,17 @@ export default function AgendaPage() {
                   className="w-full border rounded-md p-2 bg-white"
                   value={mobileStartHHMM}
                   onChange={(e) => setMobileStartHHMM(e.target.value)}
+                  disabled={availableStartTimes.length === 0}
                 >
-                  {TIME_OPTIONS.map((t) => (
-                    <option key={t} value={t}>
-                      {t}
-                    </option>
-                  ))}
+                  {availableStartTimes.length === 0 ? (
+                    <option value="">Sin huecos</option>
+                  ) : (
+                    availableStartTimes.map((t) => (
+                      <option key={t} value={t}>
+                        {t}
+                      </option>
+                    ))
+                  )}
                 </select>
               </div>
 
@@ -511,9 +587,15 @@ export default function AgendaPage() {
               </div>
             </div>
 
-            <div className="text-sm text-zinc-700">
-              Fin: <b>{mobileEndLabel}</b>
-            </div>
+            {availableStartTimes.length === 0 ? (
+              <div className="text-sm text-red-600">
+                No hay huecos disponibles para esa duración en este día.
+              </div>
+            ) : (
+              <div className="text-sm text-zinc-700">
+                Fin: <b>{mobileEndLabel}</b> · Huecos disponibles: <b>{availableStartTimes.length}</b>
+              </div>
+            )}
 
             <div className="flex gap-2 pt-1">
               <button className="flex-1 border rounded-md p-2" onClick={() => setMobilePickOpen(false)}>
@@ -521,6 +603,7 @@ export default function AgendaPage() {
               </button>
               <button
                 className="flex-1 bg-black text-white rounded-md p-2"
+                disabled={availableStartTimes.length === 0}
                 onClick={() => {
                   openCreateFromDayAndTime(new Date(mobileDay), mobileStartHHMM, mobileDuration);
                   setMobilePickOpen(false);
@@ -533,7 +616,7 @@ export default function AgendaPage() {
         </div>
       )}
 
-      {/* Modal CREAR (tu modal original) */}
+      {/* Modal CREAR */}
       {createSlot && (
         <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4">
           <div className="bg-white w-full max-w-lg rounded-xl p-4 space-y-3 shadow-2xl ring-1 ring-black/10">
@@ -608,7 +691,7 @@ export default function AgendaPage() {
                   />
                 </div>
                 <div className="text-sm text-zinc-500 flex items-end">
-                  (En móvil eliges hora en lista)
+                  (En móvil se ocultan horas ocupadas)
                 </div>
               </div>
 
@@ -637,7 +720,7 @@ export default function AgendaPage() {
         </div>
       )}
 
-      {/* Modal EDITAR (sin cambios, pero con overlay opaco) */}
+      {/* Modal EDITAR */}
       {editEvent && (
         <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4">
           <div className="bg-white w-full max-w-lg rounded-xl p-4 space-y-3 shadow-2xl ring-1 ring-black/10">
