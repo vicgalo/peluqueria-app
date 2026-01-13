@@ -1,6 +1,8 @@
 "use client";
 
 import "react-big-calendar/lib/css/react-big-calendar.css";
+import "@/app/agenda/agenda.css"; // 👈 CSS elegante (créalo en el paso 2)
+
 import { Calendar, dateFnsLocalizer, Views } from "react-big-calendar";
 import { format, parse, startOfWeek, getDay } from "date-fns";
 import { es } from "date-fns/locale";
@@ -11,10 +13,26 @@ const locales = { es };
 const localizer = dateFnsLocalizer({
   format,
   parse,
-  startOfWeek: () => startOfWeek(new Date(), { weekStartsOn: 1 }),
+  startOfWeek: () => startOfWeek(new Date(), { weekStartsOn: 1 }), // lunes
   getDay,
   locales,
 });
+
+const messages = {
+  allDay: "Todo el día",
+  previous: "Anterior",
+  next: "Siguiente",
+  today: "Hoy",
+  month: "Mes",
+  week: "Semana",
+  day: "Día",
+  agenda: "Agenda",
+  date: "Fecha",
+  time: "Hora",
+  event: "Cita",
+  noEventsInRange: "No hay citas en este rango.",
+  showMore: (total: number) => `+ Ver ${total} más`,
+};
 
 type Client = { id: string; full_name: string; phone: string | null };
 type Service = { id: string; name: string; default_duration_min: number; default_price: number };
@@ -214,15 +232,18 @@ export default function AgendaPage() {
       if (!(end instanceof Date) || Number.isNaN(end.getTime())) throw new Error("Hora fin inválida.");
       if (end <= start) throw new Error("La hora fin debe ser posterior a inicio.");
 
-      const { error } = await supabase.from("appointments").update({
-        start_time: start.toISOString(),
-        end_time: end.toISOString(),
-        price: p,
-        notes: editNotes.trim() ? editNotes.trim() : null,
-        status: editStatus,
-        paid: editPaid,
-        payment_method: editPaid ? editPaymentMethod : null,
-      }).eq("id", editEvent.id);
+      const { error } = await supabase
+        .from("appointments")
+        .update({
+          start_time: start.toISOString(),
+          end_time: end.toISOString(),
+          price: p,
+          notes: editNotes.trim() ? editNotes.trim() : null,
+          status: editStatus,
+          paid: editPaid,
+          payment_method: editPaid ? editPaymentMethod : null,
+        })
+        .eq("id", editEvent.id);
 
       if (error) throw new Error(error.message);
 
@@ -267,9 +288,12 @@ export default function AgendaPage() {
       <div className="border rounded-xl p-2 bg-white">
         <Calendar
           localizer={localizer}
+          culture="es"
+          messages={messages}
           events={events}
           defaultView={Views.WEEK}
-          views={[Views.DAY, Views.WEEK]}
+          views={[Views.DAY, Views.WEEK, Views.MONTH]}
+          popup
           step={15}
           timeslots={4}
           selectable
@@ -292,7 +316,6 @@ export default function AgendaPage() {
           max={new Date(1970, 1, 1, 20, 0)}
           eventPropGetter={(event) => eventStyleGetter(event)}
           style={{ height: "78vh" }}
-          messages={{ week: "Semana", day: "Día", today: "Hoy", previous: "◀", next: "▶" }}
         />
       </div>
 
@@ -302,50 +325,73 @@ export default function AgendaPage() {
           <div className="bg-white w-full max-w-lg rounded-xl p-4 space-y-3">
             <h2 className="font-semibold">Nueva cita</h2>
             <p className="text-sm text-zinc-600">
-              {format(createSlot.start, "EEE dd/MM HH:mm", { locale: es })} → {format(createSlot.end, "HH:mm", { locale: es })}
+              {format(createSlot.start, "EEE dd/MM HH:mm", { locale: es })} →{" "}
+              {format(createSlot.end, "HH:mm", { locale: es })}
             </p>
 
             <div className="grid grid-cols-1 gap-3">
               <div>
                 <label className="text-sm font-medium">Cliente</label>
-                <select className="w-full border rounded-md p-2 bg-white"
+                <select
+                  className="w-full border rounded-md p-2 bg-white"
                   value={createClientId}
                   onChange={(e) => setCreateClientId(e.target.value)}
                 >
                   <option value="__new__">+ Nuevo cliente…</option>
-                  {clients.map((c) => <option key={c.id} value={c.id}>{c.full_name}</option>)}
+                  {clients.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.full_name}
+                    </option>
+                  ))}
                 </select>
                 {createClientId === "__new__" && (
-                  <input className="mt-2 w-full border rounded-md p-2" placeholder="Nombre del cliente"
-                    value={createClientName} onChange={(e) => setCreateClientName(e.target.value)} />
+                  <input
+                    className="mt-2 w-full border rounded-md p-2"
+                    placeholder="Nombre del cliente"
+                    value={createClientName}
+                    onChange={(e) => setCreateClientName(e.target.value)}
+                  />
                 )}
               </div>
 
               <div>
                 <label className="text-sm font-medium">Servicio</label>
-                <select className="w-full border rounded-md p-2 bg-white"
+                <select
+                  className="w-full border rounded-md p-2 bg-white"
                   value={createServiceId}
                   onChange={(e) => {
                     const v = e.target.value;
                     setCreateServiceId(v);
-                    const s = services.find(x => x.id === v);
+                    const s = services.find((x) => x.id === v);
                     if (s) setCreatePrice(String(s.default_price ?? ""));
                   }}
                 >
                   <option value="__new__">+ Nuevo servicio…</option>
-                  {services.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+                  {services.map((s) => (
+                    <option key={s.id} value={s.id}>
+                      {s.name}
+                    </option>
+                  ))}
                 </select>
                 {createServiceId === "__new__" && (
-                  <input className="mt-2 w-full border rounded-md p-2" placeholder="Nombre del servicio"
-                    value={createServiceName} onChange={(e) => setCreateServiceName(e.target.value)} />
+                  <input
+                    className="mt-2 w-full border rounded-md p-2"
+                    placeholder="Nombre del servicio"
+                    value={createServiceName}
+                    onChange={(e) => setCreateServiceName(e.target.value)}
+                  />
                 )}
               </div>
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="text-sm font-medium">Precio</label>
-                  <input className="w-full border rounded-md p-2" placeholder="(opcional)"
-                    value={createPrice} onChange={(e) => setCreatePrice(e.target.value)} />
+                  <input
+                    className="w-full border rounded-md p-2"
+                    placeholder="(opcional)"
+                    value={createPrice}
+                    onChange={(e) => setCreatePrice(e.target.value)}
+                  />
                 </div>
                 <div className="text-sm text-zinc-500 flex items-end">
                   (Puedes arrastrar para elegir duración)
@@ -354,20 +400,22 @@ export default function AgendaPage() {
 
               <div>
                 <label className="text-sm font-medium">Notas</label>
-                <textarea className="w-full border rounded-md p-2" rows={3}
-                  value={createNotes} onChange={(e) => setCreateNotes(e.target.value)} />
+                <textarea
+                  className="w-full border rounded-md p-2"
+                  rows={3}
+                  value={createNotes}
+                  onChange={(e) => setCreateNotes(e.target.value)}
+                />
               </div>
             </div>
 
             {createErr && <p className="text-sm text-red-600">{createErr}</p>}
 
             <div className="flex gap-2">
-              <button className="flex-1 border rounded-md p-2" disabled={saving}
-                onClick={() => setCreateSlot(null)}>
+              <button className="flex-1 border rounded-md p-2" disabled={saving} onClick={() => setCreateSlot(null)}>
                 Cancelar
               </button>
-              <button className="flex-1 bg-black text-white rounded-md p-2" disabled={saving}
-                onClick={createAppointment}>
+              <button className="flex-1 bg-black text-white rounded-md p-2" disabled={saving} onClick={createAppointment}>
                 {saving ? "Guardando..." : "Guardar"}
               </button>
             </div>
@@ -382,33 +430,47 @@ export default function AgendaPage() {
             <h2 className="font-semibold">Editar cita</h2>
 
             <div className="text-sm text-zinc-600">
-              <div><span className="font-medium">Cliente:</span> {editEvent.raw.clients?.full_name ?? "-"}</div>
-              <div><span className="font-medium">Servicio:</span> {editEvent.raw.services?.name ?? "-"}</div>
+              <div>
+                <span className="font-medium">Cliente:</span> {editEvent.raw.clients?.full_name ?? "-"}
+              </div>
+              <div>
+                <span className="font-medium">Servicio:</span> {editEvent.raw.services?.name ?? "-"}
+              </div>
             </div>
 
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className="text-sm font-medium">Inicio</label>
-                <input className="w-full border rounded-md p-2" type="datetime-local"
-                  value={editStart} onChange={(e) => setEditStart(e.target.value)} />
+                <input
+                  className="w-full border rounded-md p-2"
+                  type="datetime-local"
+                  value={editStart}
+                  onChange={(e) => setEditStart(e.target.value)}
+                />
               </div>
               <div>
                 <label className="text-sm font-medium">Fin</label>
-                <input className="w-full border rounded-md p-2" type="datetime-local"
-                  value={editEnd} onChange={(e) => setEditEnd(e.target.value)} />
+                <input
+                  className="w-full border rounded-md p-2"
+                  type="datetime-local"
+                  value={editEnd}
+                  onChange={(e) => setEditEnd(e.target.value)}
+                />
               </div>
             </div>
 
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className="text-sm font-medium">Precio</label>
-                <input className="w-full border rounded-md p-2"
-                  value={editPrice} onChange={(e) => setEditPrice(e.target.value)} />
+                <input className="w-full border rounded-md p-2" value={editPrice} onChange={(e) => setEditPrice(e.target.value)} />
               </div>
               <div>
                 <label className="text-sm font-medium">Estado</label>
-                <select className="w-full border rounded-md p-2 bg-white"
-                  value={editStatus} onChange={(e) => setEditStatus(e.target.value as any)}>
+                <select
+                  className="w-full border rounded-md p-2 bg-white"
+                  value={editStatus}
+                  onChange={(e) => setEditStatus(e.target.value as any)}
+                >
                   <option value="reserved">Reservada</option>
                   <option value="done">Realizada</option>
                   <option value="cancelled">Cancelada</option>
@@ -419,8 +481,7 @@ export default function AgendaPage() {
 
             <div>
               <label className="text-sm font-medium">Notas</label>
-              <textarea className="w-full border rounded-md p-2" rows={3}
-                value={editNotes} onChange={(e) => setEditNotes(e.target.value)} />
+              <textarea className="w-full border rounded-md p-2" rows={3} value={editNotes} onChange={(e) => setEditNotes(e.target.value)} />
             </div>
 
             <div className="border rounded-md p-3 bg-zinc-50 space-y-2">
@@ -430,7 +491,8 @@ export default function AgendaPage() {
               </label>
 
               {editPaid && (
-                <select className="w-full border rounded-md p-2 bg-white"
+                <select
+                  className="w-full border rounded-md p-2 bg-white"
                   value={editPaymentMethod ?? ""}
                   onChange={(e) => setEditPaymentMethod((e.target.value || null) as any)}
                 >
@@ -443,16 +505,13 @@ export default function AgendaPage() {
             </div>
 
             <div className="flex gap-2">
-              <button className="flex-1 border rounded-md p-2" disabled={saving}
-                onClick={() => setEditEvent(null)}>
+              <button className="flex-1 border rounded-md p-2" disabled={saving} onClick={() => setEditEvent(null)}>
                 Cerrar
               </button>
-              <button className="flex-1 border rounded-md p-2" disabled={saving}
-                onClick={deleteAppointment}>
+              <button className="flex-1 border rounded-md p-2" disabled={saving} onClick={deleteAppointment}>
                 Eliminar
               </button>
-              <button className="flex-1 bg-black text-white rounded-md p-2" disabled={saving}
-                onClick={saveEdit}>
+              <button className="flex-1 bg-black text-white rounded-md p-2" disabled={saving} onClick={saveEdit}>
                 {saving ? "Guardando..." : "Guardar"}
               </button>
             </div>
@@ -462,3 +521,4 @@ export default function AgendaPage() {
     </main>
   );
 }
+
