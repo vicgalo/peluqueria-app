@@ -131,13 +131,23 @@ function parseHHMM(hhmm: string) {
   return { hh, mm };
 }
 
+function isTapOnEvent(target: any) {
+  if (!target) return false;
+  // busca hacia arriba si estás tocando un evento o dentro de él
+  return !!(
+    target.closest?.("[data-rbc-event='1']") ||
+    target.closest?.(".rbc-event") ||
+    target.closest?.(".rbc-event-content")
+  );
+}
+
 export default function AgendaPage() {
   const [loading, setLoading] = useState(true);
   const [events, setEvents] = useState<EventT[]>([]);
   const [clients, setClients] = useState<Client[]>([]);
   const [services, setServices] = useState<Service[]>([]);
 
-  // Crear (modal principal)
+  // Crear
   const [createSlot, setCreateSlot] = useState<null | { start: Date; end: Date }>(
     null
   );
@@ -167,9 +177,9 @@ export default function AgendaPage() {
   const [mobilePickOpen, setMobilePickOpen] = useState(false);
   const [mobileDay, setMobileDay] = useState<Date | null>(null);
   const [mobileStartHHMM, setMobileStartHHMM] = useState("09:00");
-  const [mobileDuration, setMobileDuration] = useState<number>(30); // total
-  const [mobileActive, setMobileActive] = useState<number>(30); // activo
-  const [mobileServiceId, setMobileServiceId] = useState<string>(""); // opcional
+  const [mobileDuration, setMobileDuration] = useState<number>(30);
+  const [mobileActive, setMobileActive] = useState<number>(30);
+  const [mobileServiceId, setMobileServiceId] = useState<string>("");
 
   useEffect(() => {
     const check = () => setIsMobile(window.innerWidth < 768);
@@ -234,7 +244,6 @@ export default function AgendaPage() {
     if (error) console.error(error);
 
     const rows = (data ?? []) as unknown as Row[];
-
     setEvents(
       rows.map((r) => ({
         id: r.id,
@@ -330,7 +339,6 @@ export default function AgendaPage() {
         paid: false,
         payment_method: null,
       });
-
       if (error) throw new Error(error.message);
 
       setCreateSlot(null);
@@ -395,8 +403,12 @@ export default function AgendaPage() {
 
     setSaving(true);
     try {
-      const { error } = await supabase.from("appointments").delete().eq("id", editEvent.id);
+      const { error } = await supabase
+        .from("appointments")
+        .delete()
+        .eq("id", editEvent.id);
       if (error) throw new Error(error.message);
+
       setEditEvent(null);
       await loadAppointments();
     } catch (e: any) {
@@ -412,14 +424,16 @@ export default function AgendaPage() {
     const day = startOfDayOnly(mobileDay);
 
     const todays = events.filter((e) => sameDay(e.start, day));
-
     return todays.map((e) => {
       const activeMinFromService = e.raw.services?.active_duration_min ?? null;
-      const totalMin = Math.max(1, Math.round((e.end.getTime() - e.start.getTime()) / 60000));
+      const totalMin = Math.max(
+        1,
+        Math.round((e.end.getTime() - e.start.getTime()) / 60000)
+      );
       const activeMin = Math.min(activeMinFromService ?? totalMin, totalMin);
       return {
         start: new Date(e.start),
-        end: addMinutes(new Date(e.start), activeMin), // solo bloquea activo
+        end: addMinutes(new Date(e.start), activeMin),
       };
     });
   }, [events, mobileDay]);
@@ -478,7 +492,10 @@ export default function AgendaPage() {
     const { hh, mm } = parseHHMM(mobileStartHHMM);
     const start = new Date(day);
     start.setHours(hh, mm, 0, 0);
-    const end = addMinutes(start, Math.max(1, Math.min(mobileActive, mobileDuration)));
+    const end = addMinutes(
+      start,
+      Math.max(1, Math.min(mobileActive, mobileDuration))
+    );
     return format(end, "HH:mm");
   }, [mobileDay, mobileStartHHMM, mobileDuration, mobileActive]);
 
@@ -493,7 +510,7 @@ export default function AgendaPage() {
       {isMobile && (
         <div className="border rounded-xl bg-white p-3 flex items-center gap-2">
           <div className="text-sm text-zinc-600">
-            En móvil: toca un día para crear, o toca una cita para editarla.
+            En móvil: toca una cita para editarla. Toca un día/hueco para crear.
           </div>
           <button
             className="ml-auto bg-black text-white rounded-md px-3 py-2"
@@ -527,14 +544,25 @@ export default function AgendaPage() {
           timeslots={4}
           selectable
           longPressThreshold={10}
+          components={{
+            // Marca el DOM del evento para poder detectarlo en iPhone
+            eventWrapper: (props: any) => (
+              <div data-rbc-event="1">{props.children}</div>
+            ),
+          }}
           onSelectSlot={(slotInfo: any) => {
-            // Si clicas sobre un hueco: crear
+            // ✅ FIX iPhone: si el tap era sobre un evento, no crear
+            const target = slotInfo?.box?.target;
+            if (isMobile && isTapOnEvent(target)) return;
+
             if (isMobile) return openMobilePickerForDate(slotInfo.start as Date);
-            setCreateSlot({ start: slotInfo.start as Date, end: slotInfo.end as Date });
+            setCreateSlot({
+              start: slotInfo.start as Date,
+              end: slotInfo.end as Date,
+            });
             setCreateErr(null);
           }}
           onSelectEvent={(ev: any) => {
-            // Si clicas una cita existente: editar
             if (ev?.isHoliday) return;
 
             const e = ev as EventT;
@@ -548,7 +576,6 @@ export default function AgendaPage() {
             setEditPaymentMethod(e.raw.payment_method ?? null);
           }}
           onDrillDown={(date) => {
-            // En móvil, tocar un día en vista mes -> abrir picker
             if (isMobile) openMobilePickerForDate(date as Date);
           }}
           min={new Date(1970, 1, 1, 9, 0)}
@@ -586,7 +613,9 @@ export default function AgendaPage() {
                   const s = services.find((x) => x.id === v);
                   if (s) {
                     setMobileDuration(s.default_duration_min);
-                    setMobileActive(s.active_duration_min ?? s.default_duration_min);
+                    setMobileActive(
+                      s.active_duration_min ?? s.default_duration_min
+                    );
                   } else {
                     setMobileDuration(30);
                     setMobileActive(30);
@@ -601,6 +630,7 @@ export default function AgendaPage() {
                   </option>
                 ))}
               </select>
+
               <p className="text-xs text-zinc-600 mt-1">
                 La disponibilidad se calcula con el <b>tiempo activo</b> del servicio.
               </p>
@@ -658,7 +688,9 @@ export default function AgendaPage() {
                 </div>
                 <div>
                   Bloqueo activo hasta: <b>{mobileActiveLabel}</b>{" "}
-                  <span className="text-zinc-500">(puedes atender a otra persona después)</span>
+                  <span className="text-zinc-500">
+                    (puedes atender a otra persona después)
+                  </span>
                 </div>
                 <div>
                   Huecos: <b>{availableStartTimes.length}</b>
@@ -667,7 +699,10 @@ export default function AgendaPage() {
             )}
 
             <div className="flex gap-2 pt-1">
-              <button className="flex-1 border rounded-md p-2" onClick={() => setMobilePickOpen(false)}>
+              <button
+                className="flex-1 border rounded-md p-2"
+                onClick={() => setMobilePickOpen(false)}
+              >
                 Cancelar
               </button>
               <button
@@ -682,7 +717,11 @@ export default function AgendaPage() {
                     setCreateServiceId("__new__");
                   }
 
-                  openCreateFromDayAndTime(new Date(mobileDay), mobileStartHHMM, mobileDuration);
+                  openCreateFromDayAndTime(
+                    new Date(mobileDay),
+                    mobileStartHHMM,
+                    mobileDuration
+                  );
                   setMobilePickOpen(false);
                 }}
               >
@@ -786,10 +825,18 @@ export default function AgendaPage() {
             {createErr && <p className="text-sm text-red-600">{createErr}</p>}
 
             <div className="flex gap-2">
-              <button className="flex-1 border rounded-md p-2" disabled={saving} onClick={() => setCreateSlot(null)}>
+              <button
+                className="flex-1 border rounded-md p-2"
+                disabled={saving}
+                onClick={() => setCreateSlot(null)}
+              >
                 Cancelar
               </button>
-              <button className="flex-1 bg-black text-white rounded-md p-2" disabled={saving} onClick={createAppointment}>
+              <button
+                className="flex-1 bg-black text-white rounded-md p-2"
+                disabled={saving}
+                onClick={createAppointment}
+              >
                 {saving ? "Guardando..." : "Guardar"}
               </button>
             </div>
