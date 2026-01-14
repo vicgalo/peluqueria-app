@@ -14,26 +14,15 @@ export default function LoginPage() {
     e.preventDefault();
     setMsg(null);
 
-    const { error } = await supabase.auth.signInWithPassword({
-      email,
-      password,
-    });
+    const { error } = await supabase.auth.signInWithPassword({ email, password });
+    if (error) return setMsg(error.message);
 
-    if (error) {
-      setMsg(error.message);
-      return;
-    }
-
-    // 👉 REDIRIGE AL INICIO (HOME)
-    router.push("/");
+    router.push("/"); // ✅ ahora va a Inicio
   }
 
   return (
     <main className="min-h-[70vh] flex items-center justify-center">
-      <form
-        onSubmit={onLogin}
-        className="w-full max-w-sm border rounded-xl bg-white p-5 space-y-3"
-      >
+      <form onSubmit={onLogin} className="w-full max-w-sm border rounded-xl bg-white p-5 space-y-3">
         <h1 className="text-xl font-semibold">Acceso</h1>
 
         <input
@@ -53,13 +42,10 @@ export default function LoginPage() {
 
         {msg && <p className="text-sm text-red-600">{msg}</p>}
 
-        <button className="w-full bg-black text-white rounded-md p-2">
-          Entrar
-        </button>
+        <button className="w-full bg-black text-white rounded-md p-2">Entrar</button>
 
         <p className="text-xs text-zinc-500">
-          Si no entras, revisa que el usuario exista en Supabase → Authentication
-          → Users.
+          Si no entras, revisa que el usuario exista en Supabase → Authentication → Users.
         </p>
       </form>
     </main>
