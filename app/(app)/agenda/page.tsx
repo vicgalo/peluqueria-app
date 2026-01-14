@@ -131,13 +131,25 @@ function parseHHMM(hhmm: string) {
   return { hh, mm };
 }
 
+/* ✅ NUEVO: parse/format YYYY-MM-DD sin líos de timezone */
+function formatYMD(d: Date) {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+function parseYMDToLocalDate(ymd: string) {
+  const [y, m, d] = ymd.split("-").map(Number);
+  return new Date(y, (m ?? 1) - 1, d ?? 1, 0, 0, 0, 0);
+}
+
 export default function AgendaPage() {
   const [loading, setLoading] = useState(true);
   const [events, setEvents] = useState<EventT[]>([]);
   const [clients, setClients] = useState<Client[]>([]);
   const [services, setServices] = useState<Service[]>([]);
 
-  // Vista actual (importante para el comportamiento móvil)
+  // Vista actual
   const [view, setView] = useState<any>(Views.WEEK);
 
   // Crear
@@ -167,6 +179,10 @@ export default function AgendaPage() {
   const [isMobile, setIsMobile] = useState(false);
   const [mobilePickOpen, setMobilePickOpen] = useState(false);
   const [mobileDay, setMobileDay] = useState<Date | null>(null);
+
+  // ✅ NUEVO: fecha elegida en el selector móvil (input type="date")
+  const [mobileDayYMD, setMobileDayYMD] = useState<string>(formatYMD(new Date()));
+
   const [mobileStartHHMM, setMobileStartHHMM] = useState("09:00");
   const [mobileDuration, setMobileDuration] = useState<number>(30);
   const [mobileActive, setMobileActive] = useState<number>(30);
@@ -283,6 +299,7 @@ export default function AgendaPage() {
   function openMobilePickerForDate(date: Date) {
     const d0 = startOfDayOnly(date);
     setMobileDay(d0);
+    setMobileDayYMD(formatYMD(d0)); // ✅ sincroniza input date
     setMobileServiceId("");
     setMobileDuration(30);
     setMobileActive(30);
@@ -466,8 +483,6 @@ export default function AgendaPage() {
 
   /* ───────────── ✅ WRAPPERS: tocar huecos en móvil (SEMANA/MES) ───────────── */
   function MobileTimeSlotWrapper({ children, value }: any) {
-    // En móvil, en SEMANA: tocar un hueco abre el selector del día.
-    // En DÍA: no hacemos nada (solo editar citas).
     if (!isMobile || view !== Views.WEEK) return children;
 
     const child = Array.isArray(children) ? children[0] : children;
@@ -477,7 +492,6 @@ export default function AgendaPage() {
 
     return cloneElement(child as any, {
       onClick: (e: any) => {
-        // Si el toque cae "dentro" de una cita, no abrir crear (deja que el evento maneje)
         const t = e?.target as HTMLElement | null;
         if (t && t.closest(".rbc-event")) return;
 
@@ -489,7 +503,6 @@ export default function AgendaPage() {
   }
 
   function MobileDateCellWrapper({ children, value }: any) {
-    // En móvil, en MES: tocar un día abre el selector.
     if (!isMobile || view !== Views.MONTH) return children;
 
     const child = Array.isArray(children) ? children[0] : children;
@@ -522,6 +535,8 @@ export default function AgendaPage() {
           <div className="text-sm text-zinc-600">
             Móvil: toca una cita para editar. En Semana/Mes puedes tocar un día para crear.
           </div>
+
+          {/* ✅ CAMBIO: este botón ahora abre el selector con fecha elegible */}
           <button
             className="ml-auto bg-black text-white rounded-md px-3 py-2"
             onClick={() => openMobilePickerForDate(new Date())}
@@ -554,17 +569,11 @@ export default function AgendaPage() {
           popup
           step={15}
           timeslots={4}
-
-          /* ✅ MÓVIL: no selectable para que tocar cita SIEMPRE abra editar */
           selectable={!isMobile}
-
-          /* Desktop: crear por selección/arrastre */
           onSelectSlot={(slotInfo: any) => {
             setCreateSlot({ start: slotInfo.start as Date, end: slotInfo.end as Date });
             setCreateErr(null);
           }}
-
-          /* Editar al tocar cita */
           onSelectEvent={(ev: any) => {
             if (ev?.isHoliday) return;
             const e = ev as EventT;
@@ -577,13 +586,10 @@ export default function AgendaPage() {
             setEditPaid(!!e.raw.paid);
             setEditPaymentMethod(e.raw.payment_method ?? null);
           }}
-
-          /* ✅ Componentes wrapper para permitir “tocar día” en móvil */
           components={{
             timeSlotWrapper: MobileTimeSlotWrapper,
             dateCellWrapper: MobileDateCellWrapper,
           }}
-
           min={new Date(1970, 1, 1, 9, 0)}
           max={new Date(1970, 1, 1, 20, 0)}
           eventPropGetter={(event) => eventStyleGetter(event)}
@@ -597,14 +603,30 @@ export default function AgendaPage() {
         />
       </div>
 
-      {/* Modal selector móvil */}
+      {/* Modal selector móvil: ✅ AHORA INCLUYE SELECTOR DE FECHA */}
       {mobilePickOpen && mobileDay && (
         <div className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-4">
           <div className="w-full max-w-md rounded-2xl shadow-2xl ring-1 ring-black/10 bg-white p-4 space-y-3">
             <h2 className="font-semibold">Nueva cita (móvil)</h2>
 
-            <div className="text-sm text-zinc-700">
-              Día: <b>{format(mobileDay, "EEEE dd/MM/yyyy", { locale: es })}</b>
+            {/* ✅ selector de fecha */}
+            <div className="grid grid-cols-2 gap-3 items-end">
+              <div className="col-span-2">
+                <label className="text-sm font-medium">Fecha</label>
+                <input
+                  type="date"
+                  className="w-full border rounded-md p-2 bg-white"
+                  value={mobileDayYMD}
+                  onChange={(e) => {
+                    const ymd = e.target.value;
+                    setMobileDayYMD(ymd);
+                    openMobilePickerForDate(parseYMDToLocalDate(ymd));
+                  }}
+                />
+                <div className="text-xs text-zinc-600 mt-1">
+                  Seleccionada: <b>{format(mobileDay, "EEEE dd/MM/yyyy", { locale: es })}</b>
+                </div>
+              </div>
             </div>
 
             <div>
@@ -715,7 +737,16 @@ export default function AgendaPage() {
                     setCreateServiceId("__new__");
                   }
 
-                  openCreateFromDayAndTime(new Date(mobileDay), mobileStartHHMM, mobileDuration);
+                  // abre modal principal con la fecha seleccionada
+                  const day = startOfDayOnly(mobileDay);
+                  const { hh, mm } = parseHHMM(mobileStartHHMM);
+                  const start = new Date(day);
+                  start.setHours(hh, mm, 0, 0);
+                  const end = addMinutes(start, mobileDuration);
+
+                  setCreateSlot({ start, end });
+                  setCreateErr(null);
+
                   setMobilePickOpen(false);
                 }}
               >
