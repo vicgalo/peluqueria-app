@@ -78,6 +78,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
             <nav className="py-4 space-y-1">
               <NavItem href="/" label="Inicio" pathname={pathname} onClick={() => setOpen(false)} />
               <NavItem href="/agenda" label="Agenda" pathname={pathname} onClick={() => setOpen(false)} />
+              <NavItem href="/citas" label="Citas" pathname={pathname} onClick={() => setOpen(false)} />
               <NavItem href="/clientes" label="Clientes" pathname={pathname} onClick={() => setOpen(false)} />
               <NavItem href="/servicios" label="Servicios" pathname={pathname} onClick={() => setOpen(false)} />
               <NavItem href="/caja" label="Caja" pathname={pathname} onClick={() => setOpen(false)} />
@@ -107,6 +108,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
           <nav className="py-4 space-y-1">
             <NavItem href="/" label="Inicio" pathname={pathname} />
             <NavItem href="/agenda" label="Agenda" pathname={pathname} />
+            <NavItem href="/citas" label="Citas" pathname={pathname} />
             <NavItem href="/clientes" label="Clientes" pathname={pathname} />
             <NavItem href="/servicios" label="Servicios" pathname={pathname} />
             <NavItem href="/caja" label="Caja" pathname={pathname} />

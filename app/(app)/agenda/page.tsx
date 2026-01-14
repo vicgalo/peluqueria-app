@@ -9,6 +9,7 @@ import { es } from "date-fns/locale";
 import {
   useEffect,
   useMemo,
+  useRef,
   useState,
   cloneElement,
   isValidElement,
@@ -135,7 +136,6 @@ function buildTimeOptions(startHour = 9, endHour = 20, stepMin = 15) {
 const TIME_OPTIONS = buildTimeOptions(9, 20, 15);
 const DURATION_OPTIONS = [15, 30, 45, 60, 75, 90, 105, 120];
 
-/* ✅ parse YYYY-MM-DD a Date local (evita desfases) */
 function parseYMDToLocalDate(ymd: string) {
   const [y, m, d] = ymd.split("-").map(Number);
   return new Date(y, (m ?? 1) - 1, d ?? 1, 0, 0, 0, 0);
@@ -156,8 +156,10 @@ export default function AgendaPage() {
 
   const [view, setView] = useState<any>(Views.WEEK);
 
-  // ✅ iPhone-style: día seleccionado (móvil)
-  const [selectedDay, setSelectedDay] = useState<Date>(startOfDayOnly(new Date()));
+  // ✅ día seleccionado (móvil)
+  const [selectedDay, setSelectedDay] = useState<Date>(
+    startOfDayOnly(new Date())
+  );
 
   // Crear (modal principal)
   const [createSlot, setCreateSlot] = useState<null | { start: Date; end: Date }>(null);
@@ -472,7 +474,7 @@ export default function AgendaPage() {
     return format(addMinutes(start, Math.max(1, Math.min(mobileActive, mobileDuration))), "HH:mm");
   }, [mobileDay, mobileStartHHMM, mobileDuration, mobileActive]);
 
-  /* ───────────── iPhone-like: lista del día seleccionado (móvil) ───────────── */
+  /* ───────────── Lista del día seleccionado (móvil) ───────────── */
   const listForSelectedDay = useMemo(() => {
     const day = startOfDayOnly(selectedDay);
     const appts = events
@@ -483,26 +485,45 @@ export default function AgendaPage() {
     return { holiday, appts };
   }, [events, holidayEvents, selectedDay]);
 
-  /* ───────────── Wrappers: en MÓVIL, tocar un día en MES solo selecciona ───────────── */
+  /* ✅ Long-press (2s) para seleccionar día en MES (móvil) */
+  const pressTimer = useRef<any>(null);
+
   function MobileDateCellWrapper({ children, value }: any) {
     if (!isMobile) return children;
 
     const child = Array.isArray(children) ? children[0] : children;
     if (!isValidElement(child)) return children;
 
-    const prevOnClick = (child.props as any).onClick;
+    const clearTimer = () => {
+      if (pressTimer.current) {
+        clearTimeout(pressTimer.current);
+        pressTimer.current = null;
+      }
+    };
+
+    const startTimer = (e: any) => {
+      // Si pulsas una cita, no selecciona día
+      const t = e?.target as HTMLElement | null;
+      if (t && t.closest(".rbc-event")) return;
+
+      clearTimer();
+      pressTimer.current = setTimeout(() => {
+        setSelectedDay(startOfDayOnly(value as Date));
+      }, 2000);
+    };
+
+    const childProps: any = (child as any).props;
 
     return cloneElement(child as any, {
-      onClick: (e: any) => {
-        if (typeof prevOnClick === "function") prevOnClick(e);
-
-        // Si tocas sobre una cita del mes, deja que lo gestione el evento
-        const t = e?.target as HTMLElement | null;
-        if (t && t.closest(".rbc-event")) return;
-
-        setSelectedDay(startOfDayOnly(value as Date));
-      },
-      style: { ...(child.props as any).style, cursor: "pointer" },
+      onPointerDown: (e: any) => startTimer(e),
+      onPointerUp: () => clearTimer(),
+      onPointerCancel: () => clearTimer(),
+      onPointerLeave: () => clearTimer(),
+      // fallback móvil antiguo:
+      onTouchStart: (e: any) => startTimer(e),
+      onTouchEnd: () => clearTimer(),
+      style: { ...childProps.style, cursor: "pointer" },
+      title: "Mantén pulsado 2s para seleccionar el día",
     });
   }
 
@@ -526,14 +547,12 @@ export default function AgendaPage() {
         </button>
       </div>
 
-      {/* Calendario */}
       <div className="border rounded-2xl p-2 bg-white shadow-sm">
         <Calendar
           localizer={localizer}
           culture="es"
           messages={messages}
           events={calendarEvents}
-          // ✅ En móvil forzamos Mes (estilo iPhone). En desktop mantenemos tus vistas.
           view={isMobile ? Views.MONTH : view}
           onView={(v) => setView(v)}
           defaultView={Views.WEEK}
@@ -543,7 +562,7 @@ export default function AgendaPage() {
           timeslots={4}
           selectable={!isMobile}
           onSelectSlot={(slot) => {
-            if (isMobile) return; // en móvil, creación solo con botón +
+            if (isMobile) return;
             setCreateSlot({ start: slot.start as Date, end: slot.end as Date });
             setCreateErr(null);
           }}
@@ -560,8 +579,10 @@ export default function AgendaPage() {
             setEditPaymentMethod(e.raw.payment_method ?? null);
           }}
           onNavigate={(date) => {
-            // cuando cambias de mes, mantenemos seleccionado el día visible (si estás en móvil)
-            if (isMobile) setSelectedDay(startOfDayOnly(date as Date));
+            if (isMobile) {
+              // no forzamos selección al navegar, solo se cambia con long-press
+              // (pero si quieres que cambie al navegar de mes, dímelo)
+            }
           }}
           components={{
             dateCellWrapper: MobileDateCellWrapper,
@@ -579,7 +600,7 @@ export default function AgendaPage() {
         />
       </div>
 
-      {/* ✅ Panel estilo iPhone: lista de citas del día (solo móvil) */}
+      {/* Lista inferior móvil */}
       {isMobile && (
         <div className="border rounded-2xl bg-white shadow-sm overflow-hidden">
           <div className="px-4 py-3 border-b flex items-center gap-2">
@@ -592,7 +613,6 @@ export default function AgendaPage() {
           </div>
 
           <div className="p-3 space-y-2">
-            {/* festivo */}
             {listForSelectedDay.holiday.length > 0 && (
               <div className="rounded-xl bg-red-50 border border-red-200 p-3 text-sm">
                 <div className="font-medium text-red-700">Festivo</div>
@@ -602,10 +622,9 @@ export default function AgendaPage() {
               </div>
             )}
 
-            {/* lista */}
             {listForSelectedDay.appts.length === 0 ? (
               <div className="text-sm text-zinc-500 p-3">
-                No hay citas para este día.
+                No hay citas para este día. <span className="text-zinc-400">(Mantén pulsado 2s en el calendario para seleccionar otro día)</span>
               </div>
             ) : (
               <div className="divide-y rounded-xl border overflow-hidden">
@@ -674,7 +693,7 @@ export default function AgendaPage() {
         </div>
       )}
 
-      {/* ✅ Botón flotante + (móvil) */}
+      {/* Botón flotante + (móvil) */}
       {isMobile && (
         <button
           aria-label="Nueva cita"
@@ -807,7 +826,6 @@ export default function AgendaPage() {
                 className="flex-1 bg-black text-white rounded-md p-2"
                 disabled={availableStartTimes.length === 0}
                 onClick={() => {
-                  // prefill servicio/price en modal principal si aplica
                   if (mobileServiceId) {
                     setCreateServiceId(mobileServiceId);
                     const s = services.find((x) => x.id === mobileServiceId);
