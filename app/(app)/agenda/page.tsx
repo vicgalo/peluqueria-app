@@ -2,7 +2,19 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
-import { addDays, addMinutes, endOfMonth, endOfWeek, format, startOfMonth, startOfWeek, subDays, subMonths, subWeeks, addMonths, addWeeks } from "date-fns";
+import {
+  addDays,
+  addMinutes,
+  endOfMonth,
+  endOfWeek,
+  format,
+  startOfMonth,
+  startOfWeek,
+  subMonths,
+  subWeeks,
+  addMonths,
+  addWeeks,
+} from "date-fns";
 import { es } from "date-fns/locale";
 
 import "react-big-calendar/lib/css/react-big-calendar.css";
@@ -16,6 +28,7 @@ type Service = {
   default_duration_min: number;
   active_duration_min: number;
   default_price: number;
+  is_active?: boolean;
 };
 
 type Row = {
@@ -47,11 +60,11 @@ function startOfDayOnly(d: Date) {
   return x;
 }
 function sameDay(a: Date, b: Date) {
-  return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
-}
-function toLocalInputValue(d: Date) {
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  return (
+    a.getFullYear() === b.getFullYear() &&
+    a.getMonth() === b.getMonth() &&
+    a.getDate() === b.getDate()
+  );
 }
 function parseHHMM(hhmm: string) {
   const [hh, mm] = hhmm.split(":").map(Number);
@@ -108,7 +121,7 @@ export default function AgendaPage() {
 
   const [events, setEvents] = useState<EventT[]>([]);
   const [clients, setClients] = useState<Client[]>([]);
-  const [services, setServices] = useState<Service[]>([]);
+  const [services, setServices] = useState<Service[]>([]); // SOLO activos
 
   // Crear cita (modal)
   const [createOpen, setCreateOpen] = useState(false);
@@ -118,8 +131,10 @@ export default function AgendaPage() {
 
   const [createClientId, setCreateClientId] = useState<string>("__new__");
   const [createClientName, setCreateClientName] = useState("");
-  const [createServiceId, setCreateServiceId] = useState<string>("__new__");
-  const [createServiceName, setCreateServiceName] = useState("");
+
+  // 👇 SOLO servicios existentes (sin __new__)
+  const [createServiceId, setCreateServiceId] = useState<string>("");
+
   const [createPrice, setCreatePrice] = useState("");
   const [createNotes, setCreateNotes] = useState("");
   const [createErr, setCreateErr] = useState<string | null>(null);
@@ -132,12 +147,19 @@ export default function AgendaPage() {
 
   async function loadLists() {
     const [cRes, sRes] = await Promise.all([
-      supabase.from("clients").select("id, full_name, phone").order("full_name", { ascending: true }),
+      supabase
+        .from("clients")
+        .select("id, full_name, phone")
+        .order("full_name", { ascending: true }),
+
+      // ✅ SOLO servicios activos
       supabase
         .from("services")
-        .select("id, name, default_duration_min, active_duration_min, default_price")
+        .select("id, name, default_duration_min, active_duration_min, default_price, is_active")
+        .eq("is_active", true)
         .order("name", { ascending: true }),
     ]);
+
     setClients((cRes.data ?? []) as Client[]);
     setServices((sRes.data ?? []) as Service[]);
   }
@@ -205,9 +227,11 @@ export default function AgendaPage() {
 
     setCreateClientId("__new__");
     setCreateClientName("");
-    setCreateServiceId("__new__");
-    setCreateServiceName("");
-    setCreatePrice("");
+
+    // ✅ Selecciona por defecto el 1er servicio activo si existe
+    setCreateServiceId(services[0]?.id ?? "");
+
+    setCreatePrice(services[0]?.default_price != null ? String(services[0].default_price) : "");
     setCreateNotes("");
 
     setCreateOpen(true);
@@ -217,18 +241,9 @@ export default function AgendaPage() {
     if (createClientId !== "__new__") return createClientId;
     const name = createClientName.trim();
     if (!name) throw new Error("Indica el nombre del cliente.");
-    const { data, error } = await supabase.from("clients").insert({ full_name: name }).select("id").single();
-    if (error) throw new Error(error.message);
-    return data.id as string;
-  }
-
-  async function getOrCreateServiceId(): Promise<string> {
-    if (createServiceId !== "__new__") return createServiceId;
-    const name = createServiceName.trim();
-    if (!name) throw new Error("Indica el nombre del servicio.");
     const { data, error } = await supabase
-      .from("services")
-      .insert({ name, default_duration_min: 30, active_duration_min: 30, default_price: 0 })
+      .from("clients")
+      .insert({ full_name: name })
       .select("id")
       .single();
     if (error) throw new Error(error.message);
@@ -240,7 +255,9 @@ export default function AgendaPage() {
     setSaving(true);
     try {
       const clientId = await getOrCreateClientId();
-      const serviceId = await getOrCreateServiceId();
+
+      // ✅ En agenda NO se crean servicios. Hay que elegir uno existente.
+      if (!createServiceId) throw new Error("Selecciona un servicio (en Servicios puedes crear o activar uno).");
 
       const p = createPrice.trim() ? Number(createPrice.replace(",", ".")) : null;
       if (p !== null && Number.isNaN(p)) throw new Error("Precio inválido.");
@@ -254,7 +271,7 @@ export default function AgendaPage() {
         start_time: start.toISOString(),
         end_time: end.toISOString(),
         client_id: clientId,
-        service_id: serviceId,
+        service_id: createServiceId,
         price: p,
         notes: createNotes.trim() ? createNotes.trim() : null,
         status: "reserved",
@@ -362,9 +379,7 @@ export default function AgendaPage() {
                       {format(d, "d")}
                     </span>
 
-                    {hasEvents && (
-                      <span className="inline-flex w-2 h-2 rounded-full bg-zinc-900" />
-                    )}
+                    {hasEvents && <span className="inline-flex w-2 h-2 rounded-full bg-zinc-900" />}
                   </div>
                 </button>
               );
@@ -388,9 +403,7 @@ export default function AgendaPage() {
 
             <div className="mt-3 space-y-2">
               {dayEvents.length === 0 ? (
-                <div className="text-sm text-zinc-500">
-                  No hay citas para este día.
-                </div>
+                <div className="text-sm text-zinc-500">No hay citas para este día.</div>
               ) : (
                 <div className="divide-y rounded-xl border overflow-hidden">
                   {dayEvents.map((e) => {
@@ -405,7 +418,8 @@ export default function AgendaPage() {
                           </div>
                         </div>
                         <div className="text-sm text-zinc-700 mt-1">
-                          {e.raw.clients?.full_name ?? "Cliente"} · {e.raw.services?.name ?? "Servicio"}
+                          {e.raw.clients?.full_name ?? "Cliente"} ·{" "}
+                          {e.raw.services?.name ?? "Servicio"}
                         </div>
                         {e.raw.notes ? (
                           <div className="text-sm text-zinc-500 mt-1">{e.raw.notes}</div>
@@ -434,7 +448,8 @@ export default function AgendaPage() {
               ◀
             </button>
             <div className="flex-1 text-center font-semibold">
-              Semana de {format(startOfWeek(cursorWeek, { weekStartsOn: 1 }), "dd/MM", { locale: es })} –{" "}
+              Semana de{" "}
+              {format(startOfWeek(cursorWeek, { weekStartsOn: 1 }), "dd/MM", { locale: es })} –{" "}
               {format(endOfWeek(cursorWeek, { weekStartsOn: 1 }), "dd/MM", { locale: es })}
             </div>
             <button
@@ -468,7 +483,6 @@ export default function AgendaPage() {
                 setCreateStartHHMM(format(start, "HH:mm"));
               }}
               onSelectEvent={() => {
-                // En agenda NO editamos (se hace en Citas)
                 alert("Para editar o eliminar una cita, ve al menú “Citas”.");
               }}
               min={new Date(1970, 1, 1, 9, 0)}
@@ -527,7 +541,11 @@ export default function AgendaPage() {
 
             <div>
               <label className="text-sm font-medium">Cliente</label>
-              <select className="w-full border rounded-md p-2 bg-white" value={createClientId} onChange={(e) => setCreateClientId(e.target.value)}>
+              <select
+                className="w-full border rounded-md p-2 bg-white"
+                value={createClientId}
+                onChange={(e) => setCreateClientId(e.target.value)}
+              >
                 <option value="__new__">+ Nuevo cliente…</option>
                 {clients.map((c) => (
                   <option key={c.id} value={c.id}>
@@ -545,6 +563,7 @@ export default function AgendaPage() {
               )}
             </div>
 
+            {/* ✅ SOLO elegir servicio existente */}
             <div>
               <label className="text-sm font-medium">Servicio</label>
               <select
@@ -554,48 +573,70 @@ export default function AgendaPage() {
                   const v = e.target.value;
                   setCreateServiceId(v);
                   const s = services.find((x) => x.id === v);
-                  if (s) setCreatePrice(String(s.default_price ?? ""));
+                  if (s) {
+                    setCreatePrice(String(s.default_price ?? ""));
+                    setCreateDuration(s.default_duration_min ?? 30);
+                  }
                 }}
               >
-                <option value="__new__">+ Nuevo servicio…</option>
-                {services.map((s) => (
-                  <option key={s.id} value={s.id}>
-                    {s.name}
-                  </option>
-                ))}
+                {services.length === 0 ? (
+                  <option value="">No hay servicios activos (activa uno en “Servicios”)</option>
+                ) : (
+                  <>
+                    <option value="">Selecciona un servicio…</option>
+                    {services.map((s) => (
+                      <option key={s.id} value={s.id}>
+                        {s.name}
+                      </option>
+                    ))}
+                  </>
+                )}
               </select>
-              {createServiceId === "__new__" && (
-                <input
-                  className="mt-2 w-full border rounded-md p-2"
-                  placeholder="Nombre del servicio"
-                  value={createServiceName}
-                  onChange={(e) => setCreateServiceName(e.target.value)}
-                />
-              )}
+
+              <p className="text-xs text-zinc-500 mt-1">
+                Para crear/activar/desactivar/eliminar servicios, usa la pestaña <b>Servicios</b>.
+              </p>
             </div>
 
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className="text-sm font-medium">Precio</label>
-                <input className="w-full border rounded-md p-2" value={createPrice} onChange={(e) => setCreatePrice(e.target.value)} />
+                <input
+                  className="w-full border rounded-md p-2"
+                  value={createPrice}
+                  onChange={(e) => setCreatePrice(e.target.value)}
+                />
               </div>
               <div className="text-sm text-zinc-500 flex items-end">
-                (Editar/eliminar se hace en <b>Citas</b>)
+                (Editar/eliminar citas se hace en <b>Citas</b>)
               </div>
             </div>
 
             <div>
               <label className="text-sm font-medium">Notas</label>
-              <textarea className="w-full border rounded-md p-2" rows={3} value={createNotes} onChange={(e) => setCreateNotes(e.target.value)} />
+              <textarea
+                className="w-full border rounded-md p-2"
+                rows={3}
+                value={createNotes}
+                onChange={(e) => setCreateNotes(e.target.value)}
+              />
             </div>
 
             {createErr && <p className="text-sm text-red-600">{createErr}</p>}
 
             <div className="flex gap-2">
-              <button className="flex-1 border rounded-md p-2" disabled={saving} onClick={() => setCreateOpen(false)}>
+              <button
+                className="flex-1 border rounded-md p-2"
+                disabled={saving}
+                onClick={() => setCreateOpen(false)}
+              >
                 Cancelar
               </button>
-              <button className="flex-1 bg-black text-white rounded-md p-2" disabled={saving} onClick={createAppointment}>
+              <button
+                className="flex-1 bg-black text-white rounded-md p-2"
+                disabled={saving}
+                onClick={createAppointment}
+              >
                 {saving ? "Guardando..." : "Guardar"}
               </button>
             </div>
